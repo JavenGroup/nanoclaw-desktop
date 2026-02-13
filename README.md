@@ -3,30 +3,35 @@
 </p>
 
 <p align="center">
-  My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
+  Personal Claude assistant running securely in containers. Forked from <a href="https://github.com/gavrielc/nanoclaw">gavrielc/nanoclaw</a> with Telegram-first improvements.
 </p>
 
-<p align="center">
-  <a href="https://discord.gg/VGWXrf8x"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord"></a>
-</p>
+## What's Different in This Fork
 
-**New:** First AI assistant to support [Agent Swarms](https://code.claude.com/docs/en/agent-teams). Spin up teams of agents that collaborate in your chat.
+This fork replaces WhatsApp with **Telegram** as the primary channel and adds several improvements:
 
-## Why I Built This
+- **Telegram channel** — Full Telegram bot integration via Grammy, replacing WhatsApp (Baileys)
+- **Photo/image sending** — Agents can send screenshots and images to users via `send_photo` MCP tool
+- **Forum Topics support** — Each topic in a Telegram supergroup is a separate conversation with isolated context
+- **Anti-automation browser hints** — Pre-configured Chromium flags for bypassing bot detection on sites like xiaohongshu
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But I can't sleep well running software I don't understand with access to my life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers. Security is application-level (allowlists, pairing codes) rather than OS isolation. Everything runs in one Node process with shared memory.
+## Why NanoClaw
+
+[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But it's hard to sleep well running software you don't understand with access to your life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers.
 
 NanoClaw gives you the same core functionality in a codebase you can understand in 8 minutes. One process. A handful of files. Agents run in actual Linux containers with filesystem isolation, not behind permission checks.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/gavrielc/nanoclaw.git
+git clone https://github.com/JavenGroup/nanoclaw.git
 cd nanoclaw
 claude
 ```
 
 Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+
+To add Telegram, run `/add-telegram` and follow the prompts.
 
 ## Philosophy
 
@@ -46,14 +51,16 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 
 ## What It Supports
 
-- **WhatsApp I/O** - Message Claude from your phone
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
-- **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content
-- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
-- **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks (first personal AI assistant to support this)
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
+- **Telegram I/O** — Message Claude from Telegram (WhatsApp also supported via `/setup`)
+- **Forum Topics** — Each topic in a supergroup is a separate conversation with isolated context
+- **Photo sending** — Agents can send screenshots and images directly in chat
+- **Isolated group context** — Each group has its own `CLAUDE.md` memory, isolated filesystem, and container sandbox
+- **Main channel** — Your private chat for admin control; every other group is completely isolated
+- **Scheduled tasks** — Recurring jobs that run Claude and can message you back
+- **Web access** — Search, fetch content, and browse with headless Chromium (agent-browser)
+- **Container isolation** — Agents sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
+- **Agent Swarms** — Teams of specialized agents that collaborate on complex tasks
+- **Optional integrations** — Add Gmail (`/add-gmail`) and more via skills
 
 ## Usage
 
@@ -98,7 +105,7 @@ Users then run `/add-telegram` on their fork and get clean code that does exactl
 Skills we'd love to see:
 
 **Communication Channels**
-- `/add-telegram` - Add Telegram as channel. Should give the user option to replace WhatsApp or add as additional channel. Also should be possible to add it as a control channel (where it can trigger actions) or just a channel that can be used in actions triggered elsewhere
+- ~~`/add-telegram`~~ - Done in this fork
 - `/add-slack` - Add Slack
 - `/add-discord` - Add Discord
 
@@ -118,15 +125,15 @@ Skills we'd love to see:
 ## Architecture
 
 ```
-WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
+Telegram (Grammy) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
 ```
 
 Single Node.js process. Agents execute in isolated Linux containers with mounted directories. Per-group message queue with concurrency control. IPC via filesystem.
 
 Key files:
 - `src/index.ts` - Orchestrator: state, message loop, agent invocation
-- `src/channels/whatsapp.ts` - WhatsApp connection, auth, send/receive
-- `src/ipc.ts` - IPC watcher and task processing
+- `src/channels/telegram.ts` - Telegram bot connection, send/receive, topic routing
+- `src/ipc.ts` - IPC watcher and task processing (messages, photos, scheduling)
 - `src/router.ts` - Message formatting and outbound routing
 - `src/group-queue.ts` - Per-group queue with global concurrency limit
 - `src/container-runner.ts` - Spawns streaming agent containers
@@ -136,9 +143,9 @@ Key files:
 
 ## FAQ
 
-**Why WhatsApp and not Telegram/Signal/etc?**
+**Why Telegram?**
 
-Because I use WhatsApp. Fork it and run a skill to change it. That's the whole point.
+This fork switched to Telegram for its bot API, forum topics, and group management. WhatsApp is still supported via the original setup — run `/setup` to use it.
 
 **Why Apple Container instead of Docker?**
 
