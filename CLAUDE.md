@@ -29,6 +29,12 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 
+## Fork Strategy
+
+This repo is forked from `qwibitai/nanoclaw` (upstream). Long-term plan: rebase onto upstream once it stabilizes (tags/releases), then layer our additions on top. Until upstream has a stable version, do NOT merge or sync — develop independently.
+
+Our additions over upstream: Telegram channel (replacing WhatsApp), Lume macOS VM runtime, Patchright anti-detection browser.
+
 ## Development
 
 Run commands directly—don't tell the user to run them.

@@ -69,10 +69,27 @@ export function ensureLumeVmRunning(): void {
     });
     if (!output.includes('running')) {
       logger.info({ vm: LUME_VM_NAME }, 'Lume VM not running, starting...');
-      execSync(
-        `lume run ${LUME_VM_NAME} --shared-dir "${PROJECT_ROOT}"`,
-        { timeout: 60000 },
-      );
+      // lume run is a foreground/blocking command — spawn detached
+      const child = spawn('lume', ['run', LUME_VM_NAME, '--shared-dir', PROJECT_ROOT], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      // Wait for VM to become running
+      for (let i = 0; i < 30; i++) {
+        const status = execSync(`lume get ${LUME_VM_NAME}`, {
+          encoding: 'utf-8',
+          timeout: 10000,
+        });
+        if (status.includes('running')) break;
+        if (i === 29) throw new Error('VM not running after 60s');
+        execSync('sleep 2');
+      }
+
+      // Clear cached IP since VM just started
+      cachedVmIp = null;
+
       // Wait for SSH to become available
       const ip = getLumeVmIp();
       for (let i = 0; i < 30; i++) {

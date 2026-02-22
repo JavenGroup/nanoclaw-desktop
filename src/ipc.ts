@@ -98,22 +98,27 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 }
               } else if (data.type === 'photo' && data.chatJid && data.imagePath) {
                 if (isAuthorized(data.chatJid)) {
-                  // Resolve container path to host path
-                  const containerPath: string = data.imagePath;
+                  // Resolve container path to host path, or use absolute host path directly
+                  const imagePath: string = data.imagePath;
                   let hostPath: string;
-                  if (containerPath.startsWith('/workspace/group/')) {
-                    hostPath = path.join(GROUPS_DIR, sourceGroup, containerPath.slice('/workspace/group/'.length));
-                  } else if (containerPath.startsWith('/workspace/extra/')) {
+
+                  if (imagePath.startsWith('/workspace/group/')) {
+                    // Container path: /workspace/group/... -> GROUPS_DIR/sourceGroup/...
+                    hostPath = path.join(GROUPS_DIR, sourceGroup, imagePath.slice('/workspace/group/'.length));
+                  } else if (imagePath.startsWith('/workspace/extra/')) {
                     // Extra mounts — keep relative path but resolve from groups dir
-                    hostPath = path.join(GROUPS_DIR, sourceGroup, containerPath.slice('/workspace/'.length));
+                    hostPath = path.join(GROUPS_DIR, sourceGroup, imagePath.slice('/workspace/'.length));
+                  } else if (path.isAbsolute(imagePath) && fs.existsSync(imagePath)) {
+                    // Absolute host path (e.g., from macOS agent runner) — use directly
+                    hostPath = imagePath;
                   } else {
-                    logger.warn({ containerPath, sourceGroup }, 'Photo path not resolvable to host');
+                    logger.warn({ imagePath, sourceGroup }, 'Photo path not resolvable to host');
                     fs.unlinkSync(filePath);
                     continue;
                   }
 
                   if (!fs.existsSync(hostPath)) {
-                    logger.warn({ hostPath, containerPath, sourceGroup }, 'Photo file not found on host');
+                    logger.warn({ hostPath, imagePath, sourceGroup }, 'Photo file not found on host');
                     fs.unlinkSync(filePath);
                     continue;
                   }

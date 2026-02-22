@@ -462,19 +462,26 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
-  ensureContainerSystemRunning();
-
-  // Check Lume VM if any group uses it
-  try {
-    const { ensureLumeVmRunning } = await import('./lume-runner.js');
-    ensureLumeVmRunning();
-  } catch {
-    // Lume not available — fine if no group uses runtime: 'lume'
-  }
-
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Start runtimes based on what registered groups actually use
+  const groups = getAllRegisteredGroups();
+  const runtimes = new Set(Object.values(groups).map(g => g.runtime || 'container'));
+
+  if (runtimes.has('container')) {
+    ensureContainerSystemRunning();
+  }
+
+  if (runtimes.has('lume')) {
+    try {
+      const { ensureLumeVmRunning } = await import('./lume-runner.js');
+      ensureLumeVmRunning();
+    } catch {
+      // Lume not available
+    }
+  }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
