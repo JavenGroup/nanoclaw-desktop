@@ -24,6 +24,9 @@ groups/global/*
 
 # OS
 .DS_Store
+.fseventsd/
+.Trashes/
+.Spotlight-V100/
 
 # IDE
 .idea/
