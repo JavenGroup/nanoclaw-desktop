@@ -3,7 +3,11 @@ name: setup
 description: Run initial NanoClaw setup. Use when user wants to install dependencies, authenticate WhatsApp, register their main channel, or start the background services. Triggers on "setup", "install", "configure nanoclaw", or first-time setup requests.
 ---
 
-# NanoClaw Setup
+# NanoClaw Setup (Upstream - Legacy)
+
+> **⚠️ This skill is from the upstream repo and may not work with NanoClaw Desktop.**
+> It targets WhatsApp + Apple Container, which this fork has replaced with Telegram + Lume VM.
+> **Use `/setup-desktop` instead.**
 
 Run all commands automatically. Only pause when user action is required (WhatsApp authentication, configuration choices).
 
