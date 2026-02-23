@@ -1,7 +1,8 @@
 <h1 align="center">NanoClaw Desktop</h1>
 
 <p align="center">
-  Personal Claude assistant running on a real macOS desktop — with anti-detection browser, multi-project isolation, and Telegram control.<br>
+  <strong>macOS only</strong> — Personal Claude assistant running on a real macOS desktop VM, with anti-detection browser, multi-project isolation, and Telegram control.<br>
+  Requires Apple Silicon Mac. "Desktop" = macOS desktop inside a <a href="https://github.com/trycua/cua">Lume</a> VM, not a Windows/Linux GUI app.<br>
   Forked from <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a> at commit <code>acdc645</code>.
 </p>
 
@@ -123,10 +124,10 @@ Then run `/setup-desktop`. Claude Code handles Lume VM, Telegram bot, authentica
 
 ## Requirements
 
-- macOS (Apple Silicon recommended)
+- **macOS on Apple Silicon** (M1/M2/M3/M4) — Lume VM requires Apple's Virtualization.framework, macOS-only. Other platforms may work with Docker/container runtime but are untested.
 - Node.js 20+
 - [Claude Code](https://claude.ai/download)
-- [Lume](https://github.com/trycua/cua) (macOS VM runtime) or [Apple Container](https://github.com/apple/container) or [Docker](https://docker.com/products/docker-desktop)
+- [Lume](https://github.com/trycua/cua) (macOS VM runtime)
 
 ## Key Files
 
