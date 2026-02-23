@@ -39,73 +39,107 @@ let cachedVmIp: string | null = null;
 function getLumeVmIp(): string {
   if (cachedVmIp) return cachedVmIp;
 
+  // Try JSON format first (more reliable)
+  try {
+    const jsonOutput = execSync(`lume get ${LUME_VM_NAME} --format json`, {
+      encoding: 'utf-8',
+      timeout: 10000,
+    });
+    const vms = JSON.parse(jsonOutput);
+    const vm = Array.isArray(vms) ? vms[0] : vms;
+    if (vm?.ipAddress) {
+      cachedVmIp = vm.ipAddress;
+      return cachedVmIp!;
+    }
+  } catch {
+    // Fall through to table parsing
+  }
+
+  // Fall back to table output parsing
   try {
     const output = execSync(`lume get ${LUME_VM_NAME}`, {
       encoding: 'utf-8',
       timeout: 10000,
     });
-    // Parse the table output — IP is in the second-to-last column
     const lines = output.trim().split('\n');
     if (lines.length < 2) throw new Error('No VM data');
     const dataLine = lines[1]; // Skip header
-    // IP looks like 192.168.x.x — find it with regex
     const ipMatch = dataLine.match(/(\d+\.\d+\.\d+\.\d+)/);
-    if (!ipMatch) throw new Error('No IP found in lume output');
-    cachedVmIp = ipMatch[1];
-    return cachedVmIp;
-  } catch (err) {
-    throw new Error(
-      `Failed to get Lume VM IP for "${LUME_VM_NAME}": ${err instanceof Error ? err.message : String(err)}`,
-    );
+    if (ipMatch) {
+      cachedVmIp = ipMatch[1];
+      return cachedVmIp!;
+    }
+  } catch {
+    // Fall through
   }
+
+  // Last resort: try SSH to known VM subnet IPs
+  // Lume VMs typically get 192.168.64.x
+  const knownIp = process.env.LUME_VM_IP;
+  if (knownIp) {
+    cachedVmIp = knownIp;
+    return cachedVmIp;
+  }
+
+  throw new Error(
+    `Failed to get Lume VM IP for "${LUME_VM_NAME}": no IP found (VM may be stopped)`,
+  );
 }
 
 /** Check that the Lume VM is running and reachable. */
 export function ensureLumeVmRunning(): void {
+  // First, check if SSH is already reachable (VM may be running even if lume reports stopped)
   try {
-    const output = execSync(`lume get ${LUME_VM_NAME}`, {
-      encoding: 'utf-8',
-      timeout: 10000,
-    });
-    if (!output.includes('running')) {
-      logger.info({ vm: LUME_VM_NAME }, 'Lume VM not running, starting...');
-      // lume run is a foreground/blocking command — spawn detached
-      const child = spawn('lume', ['run', LUME_VM_NAME, '--shared-dir', PROJECT_ROOT], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
+    const ip = getLumeVmIp();
+    execSync(
+      `ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no ${LUME_VM_USER}@${ip} 'echo ok'`,
+      { timeout: 6000, encoding: 'utf-8' },
+    );
+    logger.info({ vm: LUME_VM_NAME, ip }, 'Lume VM already reachable via SSH');
+    return;
+  } catch {
+    // SSH not reachable, try to start VM
+    cachedVmIp = null;
+  }
 
-      // Wait for VM to become running
-      for (let i = 0; i < 30; i++) {
-        const status = execSync(`lume get ${LUME_VM_NAME}`, {
-          encoding: 'utf-8',
-          timeout: 10000,
-        });
-        if (status.includes('running')) break;
-        if (i === 29) throw new Error('VM not running after 60s');
+  try {
+    logger.info({ vm: LUME_VM_NAME }, 'Lume VM not reachable, starting...');
+    // lume run is a foreground/blocking command — spawn detached
+    const child = spawn('lume', ['run', LUME_VM_NAME, '--shared-dir', PROJECT_ROOT], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+
+    // Wait for VM to become running
+    for (let i = 0; i < 30; i++) {
+      const status = execSync(`lume get ${LUME_VM_NAME}`, {
+        encoding: 'utf-8',
+        timeout: 10000,
+      });
+      if (status.includes('running')) break;
+      if (i === 29) throw new Error('VM not running after 60s');
+      execSync('sleep 2');
+    }
+
+    // Clear cached IP since VM just started
+    cachedVmIp = null;
+
+    // Wait for SSH to become available
+    const ip = getLumeVmIp();
+    for (let i = 0; i < 30; i++) {
+      try {
+        execSync(
+          `ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no ${LUME_VM_USER}@${ip} 'echo ok'`,
+          { timeout: 5000 },
+        );
+        break;
+      } catch {
+        if (i === 29) throw new Error('VM SSH not reachable after 60s');
         execSync('sleep 2');
       }
-
-      // Clear cached IP since VM just started
-      cachedVmIp = null;
-
-      // Wait for SSH to become available
-      const ip = getLumeVmIp();
-      for (let i = 0; i < 30; i++) {
-        try {
-          execSync(
-            `ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no ${LUME_VM_USER}@${ip} 'echo ok'`,
-            { timeout: 5000 },
-          );
-          break;
-        } catch {
-          if (i === 29) throw new Error('VM SSH not reachable after 60s');
-          execSync('sleep 2');
-        }
-      }
-      logger.info({ vm: LUME_VM_NAME, ip }, 'Lume VM started');
     }
+    logger.info({ vm: LUME_VM_NAME, ip }, 'Lume VM started');
   } catch (err) {
     logger.warn(
       { vm: LUME_VM_NAME, err },
@@ -191,17 +225,18 @@ function buildSshCommand(
   // Setup symlinks
   parts.push(
     `mkdir -p "${ws}"`,
-    `rm -f "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions"`,
+    `rm -f "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions" "${ws}/agent-runner"`,
     `ln -sf "${shared}/groups/${effectiveFolder}" "${ws}/group"`,
     `ln -sf "${shared}/data/ipc/${effectiveFolder}" "${ws}/ipc"`,
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
     `ln -sf "${shared}/data/sessions/${effectiveFolder}" "${ws}/sessions"`,
+    `ln -sf "${shared}/container/agent-runner" "${ws}/agent-runner"`,
   );
 
   // Run agent-runner with browser support (headed mode for anti-detection)
   const browserPath = '/Users/lume/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
   parts.push(
-    `cd "${ws}" && WORKSPACE_BASE="${ws}" AGENT_BROWSER_EXECUTABLE_PATH='${browserPath}' AGENT_BROWSER_HEADED=1 PATH="${ws}/tools/node_modules/.bin:${ws}/tools:/opt/homebrew/bin:$PATH" node "${ws}/agent-runner/dist/index.js"`,
+    `cd "${ws}" && WORKSPACE_BASE="${ws}" AGENT_BROWSER_EXECUTABLE_PATH='${browserPath}' AGENT_BROWSER_HEADED=1 PATH="${ws}/tools/node_modules/.bin:${ws}/tools:/Users/${LUME_VM_USER}/local/bin:/opt/homebrew/bin:$HOME/local/bin:$PATH" node "${ws}/agent-runner/dist/index.js"`,
   );
 
   return [

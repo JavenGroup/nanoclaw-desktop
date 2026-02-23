@@ -9,6 +9,38 @@ Run all commands automatically. Only pause when user action is required (Telegra
 
 **UX Note:** When asking the user questions, prefer using the `AskUserQuestion` tool instead of just outputting text.
 
+## Known Pitfalls — READ BEFORE STARTING
+
+These are real issues encountered during setup. Follow this guidance to avoid them:
+
+1. **Lume CLI syntax**: Uses positional args, NOT `--name`. Correct: `lume run my-vm`, `lume get my-vm`. Wrong: `lume run --name my-vm`. No `--display` flag exists (display is on by default, use `--no-display` to disable).
+
+2. **VM requires manual setup**: After `lume create` + `lume run`, a macOS Setup Assistant appears in the VM window. The user MUST manually complete it. **Explicitly tell them** to create user `lume` / password `lume` and enable Remote Login. Many users assume this is automatic — it is NOT.
+
+3. **SSH won't work until Remote Login is enabled**: Port 22 is closed by default. User must go to System Settings → General → Sharing → Remote Login inside the VM. Do NOT attempt SSH until user confirms this.
+
+4. **VM user has no sudo/admin**: Homebrew install will fail. Use Node.js prebuilt binary (`~/local/bin`) instead of `brew install node`.
+
+5. **SSH non-login shell misses PATH**: `~/.zshrc` is not sourced in SSH commands. The lume-runner already prepends `$HOME/local/bin` to PATH, but verify Node.js is reachable: `ssh lume@IP '$HOME/local/bin/node --version'`.
+
+6. **`lume get` reports wrong status**: May show "stopped" and IP as null/`-` even when VM is running. Always test SSH directly rather than trusting `lume get` status. Set `LUME_VM_IP` in `.env` as a reliable fallback.
+
+7. **`ensureLumeVmRunning` causes VNC popups**: If it tries to start a VM that's already running, it spawns a conflicting instance. The code now checks SSH first. If VNC popups appear, it means the SSH-first check is not working.
+
+8. **launchd doesn't load `.env`**: The plist MUST include `--env-file=.env` in ProgramArguments. Without it, `LUME_VM_NAME`, `LUME_VM_IP`, `TELEGRAM_BOT_TOKEN` etc. will all be missing.
+
+9. **agent-runner must be built**: `container/agent-runner/dist/` doesn't exist by default. Run `npm install && npx tsc` inside `container/agent-runner/` before first use.
+
+10. **Telegram bot privacy**: Bots in groups can only see `/commands` by default. User must either disable privacy via BotFather (`/setprivacy` → Disable) or make bot a group admin. Tell them BEFORE testing.
+
+11. **Three files need the assistant name**: When changing from "Andy" to a custom name, update ALL of: `src/config.ts`, `groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`. Missing any one causes the bot to introduce itself with the wrong name.
+
+12. **Bot must be running for `/chatid`**: The bot only responds to `/chatid` when NanoClaw is running. Build and start it (`npx tsx --env-file=.env src/index.ts`) BEFORE asking the user to send `/chatid`.
+
+13. **VM name mismatch**: Three places can disagree on VM name: `lume create` defaults to `default`, user may have an existing VM with a different name (e.g. `my-vm`), and code defaults `LUME_VM_NAME` to `nanoclaw-vm`. After identifying the actual VM name (via `lume ls`), MUST set `LUME_VM_NAME=actual-name` in `.env`. Use the actual VM name consistently in all `lume` commands throughout setup.
+
+---
+
 ## 1. Install Dependencies
 
 ```bash
@@ -74,59 +106,107 @@ lume ls 2>/dev/null
 
 If no VM exists, create one:
 ```bash
-lume create --name default --os macos
+lume create default --os macos
 ```
 
 This downloads a macOS restore image and creates the VM. It takes a while (several GB download).
 
-Start the VM (with display so the user can see the desktop):
+Start the VM (display is on by default):
 ```bash
-lume run --name default --display
+lume run VM_NAME --shared-dir PROJECT_ROOT
 ```
+
+**Important:** Lume CLI uses positional arguments, NOT `--name`:
+- Correct: `lume run my-vm`, `lume get my-vm`
+- Wrong: `lume run --name my-vm`, `lume get --name my-vm`
+- Display is on by default. There is no `--display` flag, only `--no-display`.
 
 Run this with `run_in_background: true`. The VM will take 1-2 minutes to boot.
 
-### 3c. Get the VM IP and verify SSH access
+### 3c. Manual macOS Setup (IMPORTANT — requires user action)
+
+**The VM requires manual setup through its display window.** This is NOT automatic. Tell the user:
+
+> A macOS VM window should have appeared on your screen. You need to complete the initial setup manually:
+>
+> 1. **Complete the macOS Setup Assistant** — click through language, region, accessibility, etc.
+> 2. **Create a user account** with these credentials:
+>    - Username: **lume**
+>    - Password: **lume**
+>    - (These match what NanoClaw expects for SSH access)
+> 3. **After reaching the desktop**, go to **System Settings → General → Sharing**
+> 4. **Enable "Remote Login"** (this enables SSH so NanoClaw can connect to the VM)
+>
+> Let me know when you've completed all 4 steps.
+
+**Wait for user confirmation before proceeding.** Do not attempt SSH until the user confirms.
+
+### 3d. Get the VM IP and set up SSH key access
 
 ```bash
-lume get --name default --format json
+lume get VM_NAME --format json
 ```
 
-Extract the IP address, then test SSH:
+Extract the IP address from the JSON output (`ipAddress` field).
+
+**Note:** `lume get` may report status as "stopped" even when the VM is running. If `ipAddress` is null, try the table format or test SSH directly to `192.168.64.x` subnet.
+
+Test SSH with password first:
 ```bash
-ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 lume@VM_IP echo "SSH OK"
+sshpass -p "lume" ssh -o StrictHostKeyChecking=no lume@VM_IP echo "SSH OK"
 ```
 
-Default credentials: user `lume`, no password (key-based auth via Lume).
+If `sshpass` is not installed:
+```bash
+brew install hudochenkov/sshpass/sshpass
+```
 
-### 3d. Install tools inside the VM
+Then set up key-based SSH (so NanoClaw can connect without a password):
+```bash
+# Generate SSH key if none exists
+ls ~/.ssh/id_*.pub 2>/dev/null || ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -q
 
-SSH into the VM and install the agent-runner and patchright browser:
+# Copy key to VM
+sshpass -p "lume" ssh-copy-id -o StrictHostKeyChecking=no lume@VM_IP
+```
+
+Verify passwordless SSH:
+```bash
+ssh -o StrictHostKeyChecking=no lume@VM_IP echo "SSH OK"
+```
+
+### 3e. Install Node.js inside the VM
+
+The VM user may not have admin/sudo privileges, so use a prebuilt binary instead of Homebrew:
 
 ```bash
 ssh lume@VM_IP 'bash -s' << 'SETUP'
-# Install Homebrew if not present
-which brew || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-eval "$(/opt/homebrew/bin/brew shellenv)"
-
-# Install Node.js
-brew install node
-
-# Install patchright browser
-npx patchright install chromium
+curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.xz -o /tmp/node.tar.xz
+mkdir -p ~/local
+tar -xJf /tmp/node.tar.xz -C ~/local --strip-components=1
+echo 'export PATH="$HOME/local/bin:$PATH"' >> ~/.zshrc
+export PATH="$HOME/local/bin:$PATH"
+node --version && npm --version && echo "Node installed successfully"
 SETUP
 ```
 
-Then copy the agent-runner to the VM's shared filesystem:
+### 3f. Build the agent-runner
+
+The agent-runner must be compiled before the VM can use it:
+
 ```bash
-cp -r container/agent-runner /path/to/shared/
+cd PROJECT_ROOT/container/agent-runner && npm install && npx tsc
+cd PROJECT_ROOT
 ```
 
-The shared filesystem is available at `/Volumes/My Shared Files` inside the VM (VirtioFS).
+Verify:
+```bash
+ls container/agent-runner/dist/index.js
+```
 
-### 3e. Configure shared directory
+### 3g. Configure shared directory and verify
 
-Lume VMs use VirtioFS for host-VM file sharing. The NanoClaw data directories must be accessible:
+Lume VMs use VirtioFS for host-VM file sharing (passed via `--shared-dir` when starting the VM). The NanoClaw data directories must exist:
 
 ```bash
 # Ensure data directories exist
@@ -139,7 +219,18 @@ Verify from inside the VM:
 ssh lume@VM_IP ls "/Volumes/My Shared Files/"
 ```
 
-The project root should be visible as a shared directory.
+The project root contents should be visible.
+
+### 3h. Add VM config to .env
+
+Add the VM name and IP to `.env` so NanoClaw can find it:
+
+```
+LUME_VM_NAME=VM_NAME
+LUME_VM_IP=VM_IP
+```
+
+The `LUME_VM_IP` is a reliable fallback — `lume get` sometimes reports incorrect status/IP.
 
 ## 4. Set Up Telegram Bot
 
@@ -160,7 +251,19 @@ TELEGRAM_BOT_TOKEN=<token>
 TELEGRAM_ONLY=true
 ```
 
-### 4b. Enable Forum Topics (recommended)
+### 4b. Disable bot privacy mode
+
+Tell the user:
+> **Important:** By default, Telegram bots in groups can only see `/commands` and direct @mentions. To let the bot see all messages:
+>
+> 1. Message **@BotFather** on Telegram
+> 2. Send `/setprivacy`
+> 3. Select your bot
+> 4. Choose **Disable**
+>
+> Alternatively, make the bot an **admin** in the group (admins can see all messages).
+
+### 4c. Enable Forum Topics (recommended)
 
 Tell the user:
 > For multi-project isolation, your Telegram group should have **Forum Topics** enabled:
@@ -170,12 +273,25 @@ Tell the user:
 > 3. Add your bot to the group and make it an admin
 > 4. Create topics for different projects
 
-### 4c. Get the Chat ID
+### 4d. Get the Chat ID
+
+The bot must be running to respond to `/chatid`. Build and start it first:
+
+```bash
+npm run build
+```
+
+Run briefly (set Bash tool timeout to 15000ms):
+```bash
+npx tsx --env-file=.env src/index.ts
+```
 
 Tell the user:
 > Send `/chatid` to your bot in the Telegram group. The bot will reply with the registration ID.
 >
 > If the group has topics, send `/chatid` in the **General** topic.
+
+After getting the chat ID, stop the temporary process.
 
 ## 5. Configure Assistant Name and Register Group
 
@@ -188,38 +304,12 @@ Ask the user:
 
 ### 5b. Register the main channel
 
-First, build and start briefly to initialize the database:
-
-```bash
-npm run build
-```
-
-Run briefly (set Bash tool timeout to 15000ms):
-```bash
-npx tsx --env-file=.env src/index.ts
-```
-
-Then register the group. Write `data/registered_groups.json`:
+Write `data/registered_groups.json`:
 
 ```json
 {
   "CHAT_JID": {
     "name": "GROUP_NAME",
-    "folder": "FOLDER_NAME",
-    "trigger": "@ASSISTANT_NAME",
-    "added_at": "CURRENT_ISO_TIMESTAMP",
-    "runtime": "lume"
-  }
-}
-```
-
-**Important:** Set `"runtime": "lume"` — this tells NanoClaw to use the Lume VM instead of containers.
-
-For the main (admin) channel, also set:
-```json
-{
-  "MAIN_JID": {
-    "name": "main",
     "folder": "main",
     "trigger": "@ASSISTANT_NAME",
     "added_at": "CURRENT_ISO_TIMESTAMP",
@@ -229,11 +319,16 @@ For the main (admin) channel, also set:
 }
 ```
 
+**Important:** Set `"runtime": "lume"` — this tells NanoClaw to use the Lume VM instead of containers.
+
 ### 5c. Update assistant name if not "Andy"
 
-If the user chose a name other than `Andy`, update:
+If the user chose a name other than `Andy`, update ALL of these files:
 1. `src/config.ts` — change the `ASSISTANT_NAME` default
-2. `groups/global/CLAUDE.md` — change the persona name
+2. `groups/global/CLAUDE.md` — change the persona name and heading
+3. `groups/main/CLAUDE.md` — change the persona name and heading
+
+**All three files must be updated**, otherwise the agent will introduce itself with the wrong name.
 
 ## 6. Configure launchd Service (Optional)
 
@@ -241,6 +336,8 @@ Ask the user:
 > Do you want NanoClaw to start automatically on login?
 
 If yes:
+
+**Important:** Use `--env-file=.env` in ProgramArguments so the service loads environment variables from `.env`. Without this, variables like `LUME_VM_NAME` and `LUME_VM_IP` won't be available.
 
 ```bash
 NODE_PATH=$(which node)
@@ -257,6 +354,7 @@ cat > ~/Library/LaunchAgents/com.nanoclaw-desktop.plist << EOF
     <key>ProgramArguments</key>
     <array>
         <string>${NODE_PATH}</string>
+        <string>--env-file=.env</string>
         <string>${PROJECT_PATH}/dist/index.js</string>
     </array>
     <key>WorkingDirectory</key>
@@ -299,11 +397,12 @@ npm run dev
 
 Check the logs for successful startup:
 ```bash
-tail -20 /tmp/nanoclaw.log
+tail -20 logs/nanoclaw.log
 ```
 
 You should see:
 - `Database initialized`
+- `Lume VM already reachable via SSH`
 - `Telegram bot connected`
 - `NanoClaw running (trigger: @AssistantName)`
 
@@ -318,23 +417,37 @@ Tell the user:
 
 **Lume VM not starting:**
 - Check VM status: `lume ls`
-- Start manually: `lume run --name default --display`
-- Check IP: `lume get --name default --format json`
+- Start manually: `lume run VM_NAME --shared-dir PROJECT_ROOT`
+- Check IP: `lume get VM_NAME --format json`
+- Note: `lume get` may show "stopped" even when the VM is running. Test SSH directly.
 
-**SSH connection fails:**
-- Verify VM is running and has an IP
+**SSH connection refused:**
+- Verify "Remote Login" is enabled in VM: System Settings → General → Sharing → Remote Login
+- The VM may need 1-2 minutes to fully boot after creation
 - Try: `ssh -o StrictHostKeyChecking=no lume@VM_IP`
-- The VM may need 1-2 minutes to fully boot
+
+**SSH permission denied:**
+- Key-based auth may not be set up. Use `sshpass -p "lume" ssh-copy-id lume@VM_IP`
+- Verify the VM user was created with username `lume` and password `lume`
+
+**`command not found: node` in VM:**
+- Node.js was installed to `~/local/bin` which isn't in PATH for non-login SSH shells
+- The lume-runner already adds `$HOME/local/bin` to PATH. If still failing, verify: `ssh lume@VM_IP '$HOME/local/bin/node --version'`
 
 **Agent timeout (ETIMEDOUT):**
 - The VM may not be running. Check `lume ls`
 - NanoClaw auto-starts the VM on first use, but it takes time to boot
 
 **No response to messages:**
-- Verify trigger pattern: messages must start with `@AssistantName`
-- Check logs: `tail -50 /tmp/nanoclaw.log` or `logs/nanoclaw.log`
-- Verify the bot is an admin in the Telegram group
+- Verify bot privacy is disabled (BotFather → `/setprivacy` → Disable) OR bot is a group admin
+- Verify trigger pattern: messages must start with `@AssistantName` (unless `requiresTrigger: false`)
+- Check logs: `tail -50 logs/nanoclaw.log`
+- Verify the bot is in the Telegram group
 - Check that `TELEGRAM_ONLY=true` is in `.env`
+
+**Bot responds with wrong name:**
+- Check ALL persona files: `groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`, and `src/config.ts`
+- All three must have the correct assistant name
 
 **Messages going to wrong topic:**
 - This shouldn't happen — each topic auto-creates its own workspace
