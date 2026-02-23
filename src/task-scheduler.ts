@@ -20,7 +20,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { getBaseFolder, RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -44,8 +44,9 @@ async function runTask(
   );
 
   const groups = deps.registeredGroups();
+  const baseFolder = getBaseFolder(task.group_folder);
   const group = Object.values(groups).find(
-    (g) => g.folder === task.group_folder,
+    (g) => g.folder === baseFolder,
   );
 
   if (!group) {
@@ -65,7 +66,7 @@ async function runTask(
   }
 
   // Update tasks snapshot for container to read (filtered by group)
-  const isMain = task.group_folder === MAIN_GROUP_FOLDER;
+  const isMain = baseFolder === MAIN_GROUP_FOLDER;
   const tasks = getAllTasks();
   writeTasksSnapshot(
     task.group_folder,
@@ -102,7 +103,10 @@ async function runTask(
   };
 
   try {
-    const output = await runContainerAgent(
+    const runner = group.runtime === 'lume'
+      ? (await import('./lume-runner.js')).runLumeAgent
+      : runContainerAgent;
+    const output = await runner(
       group,
       {
         prompt: task.prompt,

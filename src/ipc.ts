@@ -14,7 +14,7 @@ import {
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, stripTopicSuffix } from './types.js';
+import { RegisteredGroup, getBaseFolder, getEffectiveFolder, stripTopicSuffix } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -60,7 +60,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
     const registeredGroups = deps.registeredGroups();
 
     for (const sourceGroup of groupFolders) {
-      const isMain = sourceGroup === MAIN_GROUP_FOLDER;
+      const baseFolder = getBaseFolder(sourceGroup);
+      const isMain = baseFolder === MAIN_GROUP_FOLDER;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
@@ -74,10 +75,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              // Authorization helper
+              // Authorization helper: sourceGroup is an effective folder (e.g. 'andy-workspace~t16')
               const isAuthorized = (chatJid: string) => {
                 const targetGroup = registeredGroups[chatJid] || registeredGroups[stripTopicSuffix(chatJid)];
-                return isMain || (targetGroup && targetGroup.folder === sourceGroup);
+                if (!targetGroup) return false;
+                if (isMain) return true;
+                const targetEffectiveFolder = getEffectiveFolder(targetGroup.folder, chatJid);
+                return targetEffectiveFolder === sourceGroup;
               };
 
               if (data.type === 'message' && data.chatJid && data.text) {
@@ -240,12 +244,12 @@ export async function processTaskIpc(
           break;
         }
 
-        const targetFolder = targetGroupEntry.folder;
+        const targetEffectiveFolder = getEffectiveFolder(targetGroupEntry.folder, targetJid);
 
         // Authorization: non-main groups can only schedule for themselves
-        if (!isMain && targetFolder !== sourceGroup) {
+        if (!isMain && targetEffectiveFolder !== sourceGroup) {
           logger.warn(
-            { sourceGroup, targetFolder },
+            { sourceGroup, targetEffectiveFolder },
             'Unauthorized schedule_task attempt blocked',
           );
           break;
@@ -296,7 +300,7 @@ export async function processTaskIpc(
             : 'isolated';
         createTask({
           id: taskId,
-          group_folder: targetFolder,
+          group_folder: targetEffectiveFolder,
           chat_jid: targetJid,
           prompt: data.prompt,
           schedule_type: scheduleType,
@@ -307,7 +311,7 @@ export async function processTaskIpc(
           created_at: new Date().toISOString(),
         });
         logger.info(
-          { taskId, sourceGroup, targetFolder, contextMode },
+          { taskId, sourceGroup, targetEffectiveFolder, contextMode },
           'Task created via IPC',
         );
       }

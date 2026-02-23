@@ -40,7 +40,7 @@ import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup, stripTopicSuffix } from './types.js';
+import { Channel, NewMessage, RegisteredGroup, getEffectiveFolder, stripTopicSuffix } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -222,13 +222,14 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
+  const effectiveFolder = getEffectiveFolder(group.folder, chatJid);
   const isMain = group.folder === MAIN_GROUP_FOLDER;
-  const sessionId = sessions[group.folder];
+  const sessionId = sessions[effectiveFolder];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
   writeTasksSnapshot(
-    group.folder,
+    effectiveFolder,
     isMain,
     tasks.map((t) => ({
       id: t.id,
@@ -244,7 +245,7 @@ async function runAgent(
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
   writeGroupsSnapshot(
-    group.folder,
+    effectiveFolder,
     isMain,
     availableGroups,
     new Set(Object.keys(registeredGroups)),
@@ -254,8 +255,8 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          sessions[effectiveFolder] = output.newSessionId;
+          setSession(effectiveFolder, output.newSessionId);
         }
         await onOutput(output);
       }
@@ -268,17 +269,17 @@ async function runAgent(
       {
         prompt,
         sessionId,
-        groupFolder: group.folder,
+        groupFolder: effectiveFolder,
         chatJid,
         isMain,
       },
-      (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, effectiveFolder),
       wrappedOnOutput,
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      sessions[effectiveFolder] = output.newSessionId;
+      setSession(effectiveFolder, output.newSessionId);
     }
 
     if (output.status === 'error') {
@@ -338,6 +339,30 @@ async function startMessageLoop(): Promise<void> {
 
           const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+
+          // If an agent is already active for this chat (e.g. scheduled task),
+          // pipe all messages to it regardless of trigger.
+          if (queue.isActive(chatJid)) {
+            const allPending = getMessagesSince(
+              chatJid,
+              lastAgentTimestamp[chatJid] || '',
+              ASSISTANT_NAME,
+            );
+            const messagesToSend =
+              allPending.length > 0 ? allPending : groupMessages;
+            const formatted = formatMessages(messagesToSend);
+
+            if (queue.sendMessage(chatJid, formatted)) {
+              logger.debug(
+                { chatJid, count: messagesToSend.length },
+                'Piped messages to active container',
+              );
+              lastAgentTimestamp[chatJid] =
+                messagesToSend[messagesToSend.length - 1].timestamp;
+              saveState();
+            }
+            continue;
+          }
 
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as

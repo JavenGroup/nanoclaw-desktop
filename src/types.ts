@@ -112,3 +112,33 @@ export function stripTopicSuffix(jid: string): string {
   const slashIdx = jid.indexOf('/');
   return slashIdx !== -1 ? jid.slice(0, slashIdx) : jid;
 }
+
+/**
+ * Extract the topic thread ID from a composite JID.
+ * 'tg:-1003897363949/16' -> '16'
+ * 'tg:-1003897363949' -> undefined
+ */
+export function extractTopicId(jid: string): string | undefined {
+  const slashIdx = jid.indexOf('/');
+  return slashIdx !== -1 ? jid.slice(slashIdx + 1) : undefined;
+}
+
+/**
+ * Derive an effective folder name for a topic within a registered group.
+ * Topics get isolated folders: 'andy-workspace~t16'
+ * General topic (no thread_id) uses the base folder unchanged.
+ */
+export function getEffectiveFolder(groupFolder: string, chatJid: string): string {
+  const topicId = extractTopicId(chatJid);
+  return topicId ? `${groupFolder}~t${topicId}` : groupFolder;
+}
+
+/**
+ * Extract the base group folder from an effective folder.
+ * 'andy-workspace~t16' -> 'andy-workspace'
+ * 'andy-workspace' -> 'andy-workspace'
+ */
+export function getBaseFolder(effectiveFolder: string): string {
+  const idx = effectiveFolder.indexOf('~t');
+  return idx !== -1 ? effectiveFolder.slice(0, idx) : effectiveFolder;
+}

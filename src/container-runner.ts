@@ -58,6 +58,7 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  effectiveFolder: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const homeDir = getHomeDir();
@@ -73,14 +74,14 @@ function buildVolumeMounts(
 
     // Main also gets its group folder as the working directory
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: path.join(GROUPS_DIR, effectiveFolder),
       containerPath: '/workspace/group',
       readonly: false,
     });
   } else {
     // Other groups only get their own folder
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: path.join(GROUPS_DIR, effectiveFolder),
       containerPath: '/workspace/group',
       readonly: false,
     });
@@ -102,7 +103,7 @@ function buildVolumeMounts(
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
-    group.folder,
+    effectiveFolder,
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
@@ -147,7 +148,7 @@ function buildVolumeMounts(
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', effectiveFolder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
@@ -234,11 +235,12 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
-  const groupDir = path.join(GROUPS_DIR, group.folder);
+  const effectiveFolder = input.groupFolder;
+  const groupDir = path.join(GROUPS_DIR, effectiveFolder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
-  const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
+  const mounts = buildVolumeMounts(group, input.isMain, effectiveFolder);
+  const safeName = effectiveFolder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
 
@@ -265,7 +267,7 @@ export async function runContainerAgent(
     'Spawning container agent',
   );
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  const logsDir = path.join(GROUPS_DIR, effectiveFolder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {

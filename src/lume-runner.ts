@@ -116,23 +116,24 @@ export function ensureLumeVmRunning(): void {
 
 /**
  * Prepare the workspace directories on the host.
+ * Uses effectiveFolder (e.g. 'andy-workspace~t16') for per-topic isolation.
  */
-function prepareVmWorkspace(group: RegisteredGroup): void {
+function prepareVmWorkspace(effectiveFolder: string): void {
   // Ensure IPC directories exist on host (shared with VM)
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', effectiveFolder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
 
   // Ensure group directory exists
-  const groupDir = path.join(GROUPS_DIR, group.folder);
+  const groupDir = path.join(GROUPS_DIR, effectiveFolder);
   fs.mkdirSync(groupDir, { recursive: true });
 
   // Ensure sessions directory exists
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
-    group.folder,
+    effectiveFolder,
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
@@ -171,15 +172,16 @@ function buildSshCommand(
   vmIp: string,
   group: RegisteredGroup,
   isMain: boolean,
+  effectiveFolder: string,
 ): string[] {
   const ws = LUME_WORKSPACE;
   const shared = VM_SHARED_DIR;
 
   // Build a setup script that creates the workspace symlink structure:
-  // {ws}/group/ → shared groups/{folder}/
-  // {ws}/ipc/ → shared data/ipc/{folder}/
+  // {ws}/group/ → shared groups/{effectiveFolder}/
+  // {ws}/ipc/ → shared data/ipc/{effectiveFolder}/
   // {ws}/global/ → shared groups/global/
-  // {ws}/sessions/ → shared data/sessions/{folder}/
+  // {ws}/sessions/ → shared data/sessions/{effectiveFolder}/
   const parts: string[] = [];
 
   // Auth environment
@@ -190,10 +192,10 @@ function buildSshCommand(
   parts.push(
     `mkdir -p "${ws}"`,
     `rm -f "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions"`,
-    `ln -sf "${shared}/groups/${group.folder}" "${ws}/group"`,
-    `ln -sf "${shared}/data/ipc/${group.folder}" "${ws}/ipc"`,
+    `ln -sf "${shared}/groups/${effectiveFolder}" "${ws}/group"`,
+    `ln -sf "${shared}/data/ipc/${effectiveFolder}" "${ws}/ipc"`,
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
-    `ln -sf "${shared}/data/sessions/${group.folder}" "${ws}/sessions"`,
+    `ln -sf "${shared}/data/sessions/${effectiveFolder}" "${ws}/sessions"`,
   );
 
   // Run agent-runner with browser support (headed mode for anti-detection)
@@ -224,10 +226,12 @@ export async function runLumeAgent(
   const startTime = Date.now();
   const vmIp = getLumeVmIp();
 
-  prepareVmWorkspace(group);
+  const effectiveFolder = input.groupFolder;
+  prepareVmWorkspace(effectiveFolder);
 
-  const sshArgs = buildSshCommand(vmIp, group, input.isMain);
-  const vmName = `lume-${group.folder}-${Date.now()}`;
+  const sshArgs = buildSshCommand(vmIp, group, input.isMain, effectiveFolder);
+  const safeName = effectiveFolder.replace(/[^a-zA-Z0-9-]/g, '-');
+  const vmName = `lume-${safeName}-${Date.now()}`;
 
   logger.info(
     {
@@ -235,11 +239,12 @@ export async function runLumeAgent(
       vmName,
       vmIp,
       isMain: input.isMain,
+      effectiveFolder,
     },
     'Running agent in Lume VM via SSH',
   );
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  const logsDir = path.join(GROUPS_DIR, effectiveFolder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
