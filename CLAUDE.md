@@ -4,28 +4,31 @@ Personal Claude assistant running on a real macOS desktop. See [README.md](READM
 
 ## Quick Context
 
-Single Node.js process that connects to WhatsApp, routes messages to Claude Agent SDK running in Apple Container (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process that connects to Telegram, routes messages to Claude Code CLI (Agent SDK) running in a Lume macOS VM. Each Telegram Forum Topic auto-creates an isolated workspace, session, and IPC channel.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
+| `src/channels/telegram.ts` | Telegram bot connection, send/receive, topic routing |
+| `src/lume-runner.ts` | Lume macOS VM agent runner (SSH + VirtioFS) |
+| `src/container-runner.ts` | Apple Container / Docker agent runner (fallback) |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |
 | `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/container-runner.ts` | Spawns agent containers with mounts |
-| `src/task-scheduler.ts` | Runs scheduled tasks |
+| `src/group-queue.ts` | Per-group queue with concurrency control + IPC pipe |
+| `src/task-scheduler.ts` | Runs scheduled tasks (runtime-aware) |
+| `src/types.ts` | Topic isolation helpers (`getEffectiveFolder`, `getBaseFolder`) |
 | `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
-| `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+| `groups/*/CLAUDE.md` | Per-project memory (isolated per topic) |
 
 ## Skills
 
 | Skill | When to Use |
 |-------|-------------|
-| `/setup` | First-time installation, authentication, service configuration |
+| `/setup-desktop` | First-time installation with Lume VM + Telegram |
+| `/setup` | Original upstream setup (WhatsApp + Apple Container) |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 
