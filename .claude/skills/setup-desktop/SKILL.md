@@ -39,6 +39,14 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 
 13. **VM name mismatch**: Three places can disagree on VM name: `lume create` defaults to `default`, user may have an existing VM with a different name (e.g. `my-vm`), and code defaults `LUME_VM_NAME` to `nanoclaw-vm`. After identifying the actual VM name (via `lume ls`), MUST set `LUME_VM_NAME=actual-name` in `.env`. Use the actual VM name consistently in all `lume` commands throughout setup.
 
+14. **Telegram group registration is in SQLite, not JSON**: On first run, `data/registered_groups.json` is migrated into SQLite (`store/messages.db`, table `registered_groups`). After that, the JSON file is renamed to `.migrated` and ignored. All registration changes must go through SQL inserts, not JSON file edits.
+
+15. **`folder` column is UNIQUE**: Each registered chat must have a unique folder name. Two chats cannot share the same folder. If registering both a group and a DM, use different folders (e.g. `main` for group, `username-dm` for DM).
+
+16. **DM (private chat) must be registered separately**: The group chat ID (negative, e.g. `tg:-1234567890`) and the DM chat ID (positive, e.g. `tg:1234567890`) are completely different. If the user wants both group and DM to work, register both with separate folders and both with `requires_trigger=0`.
+
+17. **Telegram long-polling can go stale**: After the bot runs for a long time, the Telegram polling connection may silently drop. Messages arrive but the bot doesn't see them. The launchd `KeepAlive` auto-restarts on crash, but silent polling failures don't crash. If the user reports "no response", first try restarting the service.
+
 ---
 
 ## 1. Install Dependencies
@@ -273,7 +281,7 @@ Tell the user:
 > 3. Add your bot to the group and make it an admin
 > 4. Create topics for different projects
 
-### 4d. Get the Chat ID
+### 4d. Get the Chat IDs
 
 The bot must be running to respond to `/chatid`. Build and start it first:
 
@@ -286,14 +294,19 @@ Run briefly (set Bash tool timeout to 15000ms):
 npx tsx --env-file=.env src/index.ts
 ```
 
+NanoClaw Desktop uses **two Telegram channels** by default:
+- **DM (direct message)** — admin channel, all messages processed, for personal/admin tasks
+- **Group chat** — project channel with Forum Topics, each topic = isolated workspace
+
 Tell the user:
-> Send `/chatid` to your bot in the Telegram group. The bot will reply with the registration ID.
+> Send `/chatid` to your bot in **two places**:
 >
-> If the group has topics, send `/chatid` in the **General** topic.
+> 1. **In a direct message to the bot** — this is your **admin channel** (positive number, e.g. `tg:1234567890`)
+> 2. **In the Telegram group** (General topic if Forum Topics enabled) — this is your **project channel** (negative number, e.g. `tg:-1234567890`)
 
-After getting the chat ID, stop the temporary process.
+Collect both chat IDs, then stop the temporary process.
 
-## 5. Configure Assistant Name and Register Group
+## 5. Configure Assistant Name and Register Channels
 
 ### 5a. Ask for trigger word
 
@@ -301,16 +314,42 @@ Ask the user:
 > What trigger word do you want to use? (default: `Andy`)
 >
 > In group chats, messages starting with `@TriggerWord` will activate the agent.
+> In DM, the trigger is not needed — all messages are processed.
 
-### 5b. Register the main channel
+### 5b. Register both channels
+
+On first run, NanoClaw reads `data/registered_groups.json`, migrates it into SQLite (`store/messages.db`), and renames the JSON to `.migrated`. So:
+
+- **Before first run**: write `data/registered_groups.json` (recommended for fresh setup)
+- **After first run**: the JSON is gone — use SQL to insert into `store/messages.db`
+
+#### Fresh setup (before first run) — write JSON
+
+**Always register both DM and Group.** Each entry MUST have a unique `folder` value.
+
+- **DM** (`folder: "main"`): admin channel with elevated privileges, `requiresTrigger: false`
+- **Group** (`folder: "projects"`): project channel with per-topic isolation
+
+Ask the user whether the group needs a trigger word:
+> Does your Telegram group have other people besides you and the bot?
+> - **Yes** → trigger word required (`requiresTrigger: true`) to avoid responding to every message
+> - **No, just me and the bot** → no trigger needed (`requiresTrigger: false`)
 
 Write `data/registered_groups.json`:
 
 ```json
 {
-  "CHAT_JID": {
-    "name": "GROUP_NAME",
+  "DM_CHAT_JID": {
+    "name": "main",
     "folder": "main",
+    "trigger": "@ASSISTANT_NAME",
+    "added_at": "CURRENT_ISO_TIMESTAMP",
+    "runtime": "lume",
+    "requiresTrigger": false
+  },
+  "GROUP_CHAT_JID": {
+    "name": "GROUP_NAME",
+    "folder": "projects",
     "trigger": "@ASSISTANT_NAME",
     "added_at": "CURRENT_ISO_TIMESTAMP",
     "runtime": "lume",
@@ -319,7 +358,40 @@ Write `data/registered_groups.json`:
 }
 ```
 
-**Important:** Set `"runtime": "lume"` — this tells NanoClaw to use the Lume VM instead of containers.
+Create the project folder:
+```bash
+mkdir -p groups/projects
+```
+
+The JSON will be auto-migrated to SQLite on first startup.
+
+#### After first run — use SQL
+
+If the database already exists (JSON was already migrated), use SQL instead:
+
+```sql
+-- Admin DM channel
+sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime)
+  VALUES ('DM_CHAT_JID', 'main', 'main', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume');"
+
+-- Project group channel (set requires_trigger=1 if group has other people, 0 if just user+bot)
+sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime)
+  VALUES ('GROUP_CHAT_JID', 'GROUP_NAME', 'projects', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume');"
+```
+
+Verify:
+```bash
+sqlite3 store/messages.db "SELECT jid, name, folder, requires_trigger FROM registered_groups;"
+```
+
+**Important:**
+- Set `runtime` to `'lume'` — tells NanoClaw to use the Lume VM
+- DM = `requiresTrigger: false` / `requires_trigger=0` (all messages processed)
+- Group = ask user: `false`/`0` if only user+bot in group, `true`/`1` if group has other people
+- Each chat MUST have a unique `folder` value — two chats cannot share the same folder
+- Group with Forum Topics: each topic auto-creates its own isolated workspace under the group's folder
 
 ### 5c. Update assistant name if not "Andy"
 
