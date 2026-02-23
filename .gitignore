@@ -18,6 +18,9 @@ groups/global/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 
+# Database
+*.db
+
 # Secrets
 *.keys.json
 .env
