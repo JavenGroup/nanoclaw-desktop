@@ -119,7 +119,7 @@ cd nanoclaw-desktop
 claude
 ```
 
-Then run `/setup`. Claude Code handles dependencies, authentication, and runtime configuration.
+Then run `/setup-desktop`. Claude Code handles Lume VM, Telegram bot, authentication, and runtime configuration.
 
 ## Requirements
 
