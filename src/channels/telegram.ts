@@ -58,11 +58,15 @@ export class TelegramChannel implements Channel {
           ? ctx.from?.first_name || 'Private'
           : (ctx.chat as any).title || 'Unknown';
 
-      const threadId = ctx.message?.message_thread_id;
+      const isTopicMessage = ctx.message?.is_topic_message;
+      const threadId = isTopicMessage ? ctx.message?.message_thread_id : undefined;
       const baseJid = `tg:${chatId}`;
       let reply = `Chat ID: \`${baseJid}\`\nName: ${chatName}\nType: ${chatType}`;
       if (threadId !== undefined) {
         reply += `\nTopic JID: \`${buildTopicJid(chatId, threadId)}\`\nThread ID: ${threadId}`;
+      }
+      if (ctx.message?.message_thread_id !== undefined && !isTopicMessage) {
+        reply += `\n_(General topic — uses base Chat ID)_`;
       }
 
       ctx.reply(reply, { parse_mode: 'Markdown' });
@@ -75,7 +79,10 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:text', async (ctx) => {
       if (ctx.message.text.startsWith('/')) return;
 
-      const threadId = ctx.message.message_thread_id;
+      // Only treat as a topic message when is_topic_message is true.
+      // General topic messages carry a message_thread_id but is_topic_message is false;
+      // using that thread ID for replies causes "message thread not found" errors.
+      const threadId = ctx.message.is_topic_message ? ctx.message.message_thread_id : undefined;
       const chatJid = buildTopicJid(ctx.chat.id, threadId);
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
@@ -145,7 +152,7 @@ export class TelegramChannel implements Channel {
 
     // Handle non-text messages with placeholders
     const storeNonText = (ctx: any, placeholder: string) => {
-      const threadId = ctx.message?.message_thread_id;
+      const threadId = ctx.message?.is_topic_message ? ctx.message?.message_thread_id : undefined;
       const chatJid = buildTopicJid(ctx.chat.id, threadId);
       const groups = this.opts.registeredGroups();
       const group = groups[chatJid] || groups[stripTopicSuffix(chatJid)];
@@ -221,15 +228,24 @@ export class TelegramChannel implements Channel {
       const { chatId, threadId } = parseTopicJid(jid);
       const opts = threadId !== undefined ? { message_thread_id: threadId } : {};
       const MAX_LENGTH = 4096;
+      const sendChunk = async (chunk: string, sendOpts: Record<string, unknown>) => {
+        try {
+          await this.bot!.api.sendMessage(chatId, chunk, sendOpts);
+        } catch (err: any) {
+          // Retry without thread ID if topic no longer exists (forum disabled, topic deleted)
+          if (sendOpts.message_thread_id && err?.message?.includes('message thread not found')) {
+            logger.warn({ jid }, 'Topic thread not found, retrying without thread ID');
+            await this.bot!.api.sendMessage(chatId, chunk);
+          } else {
+            throw err;
+          }
+        }
+      };
       if (text.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(chatId, text, opts);
+        await sendChunk(text, opts);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await this.bot.api.sendMessage(
-            chatId,
-            text.slice(i, i + MAX_LENGTH),
-            opts,
-          );
+          await sendChunk(text.slice(i, i + MAX_LENGTH), opts);
         }
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
@@ -249,7 +265,18 @@ export class TelegramChannel implements Channel {
       const opts: Record<string, unknown> = {};
       if (caption) opts.caption = caption;
       if (threadId !== undefined) opts.message_thread_id = threadId;
-      await this.bot.api.sendPhoto(chatId, new InputFile(filePath), opts);
+      try {
+        await this.bot.api.sendPhoto(chatId, new InputFile(filePath), opts);
+      } catch (err: any) {
+        if (opts.message_thread_id && err?.message?.includes('message thread not found')) {
+          logger.warn({ jid }, 'Topic thread not found for photo, retrying without thread ID');
+          const fallbackOpts: Record<string, unknown> = {};
+          if (caption) fallbackOpts.caption = caption;
+          await this.bot.api.sendPhoto(chatId, new InputFile(filePath), fallbackOpts);
+        } else {
+          throw err;
+        }
+      }
       logger.info({ jid, filePath }, 'Telegram photo sent');
     } catch (err) {
       logger.error({ jid, filePath, err }, 'Failed to send Telegram photo');

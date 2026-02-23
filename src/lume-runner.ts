@@ -225,7 +225,7 @@ function buildSshCommand(
   // Setup symlinks
   parts.push(
     `mkdir -p "${ws}"`,
-    `rm -f "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions" "${ws}/agent-runner"`,
+    `rm -rf "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions" "${ws}/agent-runner"`,
     `ln -sf "${shared}/groups/${effectiveFolder}" "${ws}/group"`,
     `ln -sf "${shared}/data/ipc/${effectiveFolder}" "${ws}/ipc"`,
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
