@@ -42,12 +42,13 @@ NanoClaw is small enough that you — or Claude Code itself — can safely modif
 ## Architecture
 
 ```
-Telegram Group
-  ├── Topic A (Project Alpha)
-  ├── Topic B (Project Beta)
-  └── General
-         │
-         ▼
+Telegram DM (admin)          Telegram Group (projects)
+  │  all messages               ├── Topic A (Project Alpha)
+  │  processed                  ├── Topic B (Project Beta)
+  │                             └── General
+  │                                    │
+  └────────────┬───────────────────────┘
+               ▼
 ┌───────────────────────────────────┐
 │  NanoClaw Desktop (Node.js)       │
 │                                   │
@@ -69,8 +70,8 @@ Telegram Group
 └──────────────┬────────────────────┘
                │ SSH
       ┌────────┴────────┐
-      │ Lume macOS VM   │    or    Apple Container / Docker
-      │ (real desktop)  │          (headless)
+      │ Lume macOS VM   │
+      │ (real desktop)  │
       │                 │
       │ agent-runner    │
       │ ├─ Claude Code (Agent SDK)
@@ -82,32 +83,37 @@ Telegram Group
 ## Features
 
 - **Lume macOS VM** — GUI desktop with anti-detection Patchright browser via SSH + VirtioFS
+- **Two-channel Telegram** — DM for admin control (all messages processed), Group for projects (trigger-based or open)
 - **Topic-based project isolation** — each Telegram Forum Topic auto-creates its own workspace, session, and IPC channel
-- **Per-project memory** — `CLAUDE.md` in each workspace, auto-loaded on every agent run
-- **Telegram-first** — Grammy bot with photo delivery, typing indicators, Forum Topics support
+- **Three-layer memory** — `global/CLAUDE.md` (persona, shared by all) → `main/CLAUDE.md` (admin privileges) / `{topic}/CLAUDE.md` (project memory)
 - **Scheduled tasks** — cron, interval, or one-time jobs that run Claude and message you back
 - **Active agent piping** — send follow-up messages mid-conversation without re-triggering
+
+### Memory Hierarchy
+
+```
+groups/
+  global/CLAUDE.md             # Persona + universal capabilities (loaded by ALL sessions)
+  main/CLAUDE.md               # DM admin instructions (group management, cross-group scheduling)
+  projects/CLAUDE.md           # Group general topic workspace
+  projects~t16/                # Topic 16 (auto-created on first message)
+    ├── CLAUDE.md              # Project memory (auto-loaded by Claude Code)
+    ├── research/              # Project files
+    └── logs/
+```
 
 ### Per-Topic Isolation
 
 ```
-groups/
-  global/                    # Shared across all agents (global CLAUDE.md)
-  my-workspace/              # General topic workspace
-  my-workspace~t16/          # Topic 16 (auto-created on first message)
-    ├── CLAUDE.md            # Project memory (auto-loaded)
-    ├── research/            # Project files
-    └── logs/
-
 data/
   ipc/
-    my-workspace~t16/        # Topic 16 IPC (isolated)
-      ├── messages/          #   agent → host (send Telegram messages)
-      ├── tasks/             #   agent → host (schedule tasks)
-      └── input/             #   host → agent (pipe user messages)
+    projects~t16/              # Topic 16 IPC (isolated)
+      ├── messages/            #   agent → host (send Telegram messages)
+      ├── tasks/               #   agent → host (schedule tasks)
+      └── input/               #   host → agent (pipe user messages)
   sessions/
-    my-workspace~t16/
-      └── .claude/           # Claude Code session persistence
+    projects~t16/
+      └── .claude/             # Claude Code session persistence
 ```
 
 Each topic = independent project. No manual registration — derived automatically from the chat JID (`{baseFolder}~t{topicId}`).
@@ -143,8 +149,9 @@ Then run `/setup-desktop`. Claude Code handles Lume VM, Telegram bot, authentica
 | `src/types.ts` | Topic isolation helpers (`getEffectiveFolder`, `getBaseFolder`) |
 | `src/db.ts` | SQLite operations (messages, groups, sessions, tasks) |
 | `container/agent-runner/` | Agent code that runs inside VM/container |
-| `groups/global/CLAUDE.md` | Global agent instructions (shared) |
-| `groups/*/CLAUDE.md` | Per-project agent memory (auto-loaded) |
+| `groups/global/CLAUDE.md` | Persona + universal capabilities (loaded by all sessions) |
+| `groups/main/CLAUDE.md` | DM admin privileges (group management, cross-group scheduling) |
+| `groups/*/CLAUDE.md` | Per-project memory (auto-loaded by Claude Code via cwd) |
 
 ## Fork Status
 
