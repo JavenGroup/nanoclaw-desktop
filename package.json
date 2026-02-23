@@ -1,7 +1,7 @@
 {
-  "name": "nanoclaw",
+  "name": "nanoclaw-desktop",
   "version": "1.0.0",
-  "description": "Personal Claude assistant. Lightweight, secure, customizable.",
+  "description": "Personal Claude assistant with macOS desktop, anti-detection browser, and multi-project isolation via Telegram topics.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

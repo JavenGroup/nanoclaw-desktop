@@ -1,6 +1,6 @@
-# NanoClaw
+# NanoClaw Desktop
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Personal Claude assistant running on a real macOS desktop. See [README.md](README.md) for architecture and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for design decisions.
 
 ## Quick Context
 

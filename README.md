@@ -1,9 +1,8 @@
-<p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
-</p>
+<h1 align="center">NanoClaw Desktop</h1>
 
 <p align="center">
-  Personal Claude assistant with Telegram-first multi-project isolation. Forked from <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a> at commit <code>acdc645</code>.
+  Personal Claude assistant running on a real macOS desktop — with anti-detection browser, multi-project isolation, and Telegram control.<br>
+  Forked from <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a> at commit <code>acdc645</code>.
 </p>
 
 ## Fork Status
@@ -49,7 +48,7 @@ Telegram Group
          │
          ▼
 ┌──────────────────────────────────┐
-│  NanoClaw (single Node.js process)│
+│  NanoClaw Desktop (Node.js process)│
 │                                  │
 │  Telegram ──→ SQLite ──→ Message │
 │  Channel      store      Loop    │
