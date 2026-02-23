@@ -112,6 +112,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   } else if (imagePath.startsWith('/workspace/extra/')) {
                     // Extra mounts — keep relative path but resolve from groups dir
                     hostPath = path.join(GROUPS_DIR, sourceGroup, imagePath.slice('/workspace/'.length));
+                  } else if (imagePath.includes('/workspace/group/')) {
+                    // Lume VM path: /Users/lume/workspace/group/... -> GROUPS_DIR/sourceGroup/...
+                    const relPath = imagePath.slice(imagePath.indexOf('/workspace/group/') + '/workspace/group/'.length);
+                    hostPath = path.join(GROUPS_DIR, sourceGroup, relPath);
                   } else if (path.isAbsolute(imagePath) && fs.existsSync(imagePath)) {
                     // Absolute host path (e.g., from macOS agent runner) — use directly
                     hostPath = imagePath;

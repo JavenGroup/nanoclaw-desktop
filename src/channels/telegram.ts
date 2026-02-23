@@ -208,6 +208,11 @@ export class TelegramChannel implements Channel {
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
           );
+          if (!botInfo.can_read_all_group_messages) {
+            logger.warn(
+              'Bot privacy mode is ON — bot cannot see messages in groups unless mentioned or made admin',
+            );
+          }
           console.log(`\n  Telegram bot: @${botInfo.username}`);
           console.log(
             '  Send /chatid to the bot to get a chat\'s registration ID\n',

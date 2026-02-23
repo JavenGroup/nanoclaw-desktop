@@ -171,6 +171,35 @@ function prepareVmWorkspace(effectiveFolder: string): void {
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+
+  // Write settings.json (if not exists) — matches container-runner behavior
+  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(settingsFile, JSON.stringify({
+      env: {
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+      },
+    }, null, 2) + '\n');
+  }
+
+  // Sync skills from container/skills/ into each group's .claude/skills/
+  const skillsSrc = path.join(PROJECT_ROOT, 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.mkdirSync(dstDir, { recursive: true });
+      for (const file of fs.readdirSync(srcDir)) {
+        const srcFile = path.join(srcDir, file);
+        const dstFile = path.join(dstDir, file);
+        fs.copyFileSync(srcFile, dstFile);
+      }
+    }
+  }
 }
 
 /** Read auth environment variables from .env for the agent. */
@@ -231,12 +260,21 @@ function buildSshCommand(
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
     `ln -sf "${shared}/data/sessions/${effectiveFolder}" "${ws}/sessions"`,
     `ln -sf "${shared}/container/agent-runner" "${ws}/agent-runner"`,
+    // Symlink .claude to per-group session so Claude Code SDK finds settings/skills
+    `rm -rf "/Users/${LUME_VM_USER}/.claude"`,
+    `ln -sf "${shared}/data/sessions/${effectiveFolder}/.claude" "/Users/${LUME_VM_USER}/.claude"`,
   );
 
+  // Main gets the project root symlink for full access
+  if (isMain) {
+    parts.push(`ln -sf "${shared}" "${ws}/project"`);
+  }
+
   // Run agent-runner with browser support (headed mode for anti-detection)
-  const browserPath = '/Users/lume/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+  // Dynamically find Chromium instead of hardcoding version
+  const browserPath = `$(find /Users/${LUME_VM_USER}/Library/Caches/ms-playwright -name 'Google Chrome for Testing' -type f 2>/dev/null | head -1)`;
   parts.push(
-    `cd "${ws}" && WORKSPACE_BASE="${ws}" AGENT_BROWSER_EXECUTABLE_PATH='${browserPath}' AGENT_BROWSER_HEADED=1 PATH="${ws}/tools/node_modules/.bin:${ws}/tools:/Users/${LUME_VM_USER}/local/bin:/opt/homebrew/bin:$HOME/local/bin:$PATH" node "${ws}/agent-runner/dist/index.js"`,
+    `cd "${ws}" && WORKSPACE_BASE="${ws}" AGENT_BROWSER_EXECUTABLE_PATH="${browserPath}" AGENT_BROWSER_HEADED=1 PATH="${ws}/tools/node_modules/.bin:${ws}/tools:/Users/${LUME_VM_USER}/local/bin:/opt/homebrew/bin:$HOME/local/bin:$PATH" node "${ws}/agent-runner/dist/index.js"`,
   );
 
   return [
