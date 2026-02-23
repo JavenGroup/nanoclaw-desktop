@@ -5,38 +5,38 @@
   Forked from <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a> at commit <code>acdc645</code>.
 </p>
 
-## Fork Status
+## Why NanoClaw Desktop
 
-| | |
-|---|---|
-| **Upstream** | [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) @ `acdc645` (75 commits behind) |
-| **Strategy** | Rebase onto upstream once it reaches a stable release. No merge until then. |
+### 1. Real macOS Desktop, Not a Headless Container
 
-## What's Different in This Fork
+Most agent frameworks run in headless Linux containers — no GUI, no real browser, easily detected by anti-bot systems. NanoClaw Desktop runs agents inside a **real macOS VM** ([Lume](https://github.com/trycua/cua)) with a full desktop environment. The agent can:
 
-### Telegram-First Channel
-Replaced WhatsApp (Baileys) with **Telegram** (Grammy) as the primary channel. Full bot API integration with send/receive, photo delivery, and typing indicators. WhatsApp support is preserved but optional.
+- **See and interact with a GUI** — click, scroll, type, just like a human
+- **Use an anti-detection browser** — [Patchright](https://github.com/nicetransition/patchright) (Chromium fork) that passes bot detection on sites like Xiaohongshu, Douyin, etc.
+- **Run desktop apps** — anything that runs on macOS is available to the agent
 
-### Topic-Based Project Isolation
-Each **Telegram Forum Topic** within a group automatically becomes an independent project with its own:
-- Workspace directory (`groups/{folder}~t{topicId}/`)
-- Claude Code session (persistent conversation context)
-- IPC channel (isolated message/task routing)
-- Project memory (`CLAUDE.md` auto-loaded per workspace)
+This is why it's called "Desktop" — the agent lives on a real desktop, not in a black box.
 
-No manual registration per topic — derived automatically from the chat JID on first message.
+### 2. Full Claude Code Power, Not a Toy Agent Framework
 
-### Lume macOS VM Runtime
-Added [Lume](https://github.com/trycua/cua) as an alternative runtime alongside Apple Container. Runs Claude Code agents inside a macOS VM with:
-- GUI desktop (for headed browser automation)
-- [Patchright](https://github.com/nicetransition/patchright) anti-detection browser (Chromium fork that bypasses bot detection)
-- Shared filesystem via VirtioFS (`/Volumes/My Shared Files`)
+Other projects (e.g. [OpenClaw](https://github.com/openclaw/openclaw)) build their own agent frameworks — custom tool calling, custom memory, custom planning. Inevitably limited.
 
-### Runtime-Aware Task Scheduler
-Scheduled tasks now select the correct runtime (Lume vs Container) based on the group's configuration, instead of hardcoding container mode.
+NanoClaw takes a different approach: **the agent IS [Claude Code](https://claude.ai/download)** — Anthropic's official CLI agent. This means:
 
-### Active Container Message Piping
-When an agent is already running (e.g. during a scheduled task), user messages are piped directly to it via IPC — bypassing the trigger word check. This enables natural back-and-forth conversation with a running agent.
+- Every Claude Code tool out of the box: `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `Task`, `Agent Teams`...
+- Session management, context compaction, multi-turn — all built in
+- MCP server extensibility
+- **Future Claude Code capabilities arrive automatically** — zero effort to upgrade
+
+NanoClaw doesn't build an agent. It orchestrates the best one available.
+
+### 3. Simple Architecture, Not a Framework
+
+One Node.js process. ~10 source files. SQLite + filesystem IPC. You can read the entire codebase in minutes.
+
+Compare with OpenClaw: 52+ modules, 8 config management files, 45+ dependencies, abstractions for 15 channel providers.
+
+NanoClaw is small enough that you — or Claude Code itself — can safely modify it to match your exact needs.
 
 ## Architecture
 
@@ -47,54 +47,45 @@ Telegram Group
   └── General
          │
          ▼
-┌──────────────────────────────────┐
-│  NanoClaw Desktop (Node.js process)│
-│                                  │
-│  Telegram ──→ SQLite ──→ Message │
+┌───────────────────────────────────┐
+│  NanoClaw Desktop (Node.js)       │
+│                                   │
+│  Telegram ──→ SQLite ──→ Message  │
 │  Channel      store      Loop    │
-│                            │     │
-│                    ┌───────┴───┐ │
-│                    │GroupQueue │ │
-│                    │concurrency│ │
-│                    │+ IPC pipe │ │
-│                    └───┬───┬──┘ │
-│                        │   │    │
-│              ┌─────────┘   └──┐ │
-│              │                │ │
-│        ┌─────┴─────┐  ┌──────┴┐│
-│        │ Scheduler  │  │ IPC   ││
-│        │ (cron/once)│  │Watcher││
-│        └────────────┘  └───────┘│
-└──────────────┬───────────────────┘
-               │
+│                            │      │
+│                    ┌───────┴───┐  │
+│                    │GroupQueue  │  │
+│                    │concurrency │  │
+│                    │+ IPC pipe  │  │
+│                    └───┬───┬──┘  │
+│                        │   │     │
+│              ┌─────────┘   └──┐  │
+│              │                │  │
+│        ┌─────┴─────┐  ┌──────┴┐ │
+│        │ Scheduler  │  │ IPC   │ │
+│        │ (cron/once)│  │Watcher│ │
+│        └────────────┘  └───────┘ │
+└──────────────┬────────────────────┘
+               │ SSH
       ┌────────┴────────┐
       │ Lume macOS VM   │    or    Apple Container / Docker
-      │ (SSH + VirtioFS)│          (volume mounts)
+      │ (real desktop)  │          (headless)
       │                 │
       │ agent-runner    │
-      │ ├─ Claude Agent SDK (query loop)
+      │ ├─ Claude Code (Agent SDK)
       │ ├─ MCP Server (nanoclaw tools)
       │ └─ patchright-browser
       └─────────────────┘
 ```
 
-### Message Lifecycle
+## Features
 
-```
-1. User sends "@trigger message" in a Topic
-2. Telegram Channel stores message in SQLite
-3. Message Loop detects new messages via polling
-4. If agent already active → pipe via IPC (no new process)
-   If no agent active   → check trigger → start new agent
-5. Compute effective folder: group.folder + topicId → "workspace~t16"
-6. Launch agent-runner in Lume VM (or Container)
-   - Symlinks workspace, IPC, sessions to topic-specific dirs
-   - Loads global/CLAUDE.md + project CLAUDE.md
-7. Agent processes message, streams results back
-8. Agent enters wait loop for follow-up messages (IPC polling)
-9. Idle timeout (no messages) → agent exits gracefully
-10. Next trigger message resumes the same session
-```
+- **Lume macOS VM** — GUI desktop with anti-detection Patchright browser via SSH + VirtioFS
+- **Topic-based project isolation** — each Telegram Forum Topic auto-creates its own workspace, session, and IPC channel
+- **Per-project memory** — `CLAUDE.md` in each workspace, auto-loaded on every agent run
+- **Telegram-first** — Grammy bot with photo delivery, typing indicators, Forum Topics support
+- **Scheduled tasks** — cron, interval, or one-time jobs that run Claude and message you back
+- **Active agent piping** — send follow-up messages mid-conversation without re-triggering
 
 ### Per-Topic Isolation
 
@@ -118,24 +109,7 @@ data/
       └── .claude/           # Claude Code session persistence
 ```
 
-The `~t` separator convention: `{baseFolder}~t{topicId}`. General topic (no thread ID) uses the base folder unchanged — fully backward compatible.
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/telegram.ts` | Telegram bot connection, send/receive, topic routing |
-| `src/lume-runner.ts` | Lume macOS VM agent runner (SSH + VirtioFS) |
-| `src/container-runner.ts` | Apple Container / Docker agent runner |
-| `src/group-queue.ts` | Per-group queue with concurrency control + IPC pipe |
-| `src/ipc.ts` | IPC watcher: messages, photos, task scheduling |
-| `src/task-scheduler.ts` | Cron/interval/once scheduled task execution |
-| `src/types.ts` | Topic isolation helpers (`getEffectiveFolder`, `getBaseFolder`) |
-| `src/db.ts` | SQLite operations (messages, groups, sessions, tasks) |
-| `container/agent-runner/` | Agent code that runs inside VM/container |
-| `groups/global/CLAUDE.md` | Global agent instructions (shared) |
-| `groups/*/CLAUDE.md` | Per-project agent memory (auto-loaded) |
+Each topic = independent project. No manual registration — derived automatically from the chat JID (`{baseFolder}~t{topicId}`).
 
 ## Quick Start
 
@@ -154,11 +128,29 @@ Then run `/setup`. Claude Code handles dependencies, authentication, and runtime
 - [Claude Code](https://claude.ai/download)
 - [Lume](https://github.com/trycua/cua) (macOS VM runtime) or [Apple Container](https://github.com/apple/container) or [Docker](https://docker.com/products/docker-desktop)
 
-## Philosophy
+## Key Files
 
-Inherited from upstream — **small enough to understand, secure by isolation, built for one user, AI-native**. See the [upstream README](https://github.com/qwibitai/nanoclaw) for the full philosophy.
+| File | Purpose |
+|------|---------|
+| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
+| `src/channels/telegram.ts` | Telegram bot connection, send/receive, topic routing |
+| `src/lume-runner.ts` | Lume macOS VM agent runner (SSH + VirtioFS) |
+| `src/container-runner.ts` | Apple Container / Docker agent runner |
+| `src/group-queue.ts` | Per-group queue with concurrency control + IPC pipe |
+| `src/ipc.ts` | IPC watcher: messages, photos, task scheduling |
+| `src/task-scheduler.ts` | Cron/interval/once scheduled task execution |
+| `src/types.ts` | Topic isolation helpers (`getEffectiveFolder`, `getBaseFolder`) |
+| `src/db.ts` | SQLite operations (messages, groups, sessions, tasks) |
+| `container/agent-runner/` | Agent code that runs inside VM/container |
+| `groups/global/CLAUDE.md` | Global agent instructions (shared) |
+| `groups/*/CLAUDE.md` | Per-project agent memory (auto-loaded) |
 
-This fork adds: **one group, many projects** — use Telegram Forum Topics to isolate different workstreams without managing multiple groups or registrations.
+## Fork Status
+
+| | |
+|---|---|
+| **Upstream** | [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) @ `acdc645` (75 commits behind) |
+| **Strategy** | Rebase onto upstream once it reaches a stable release. No merge until then. |
 
 ## License
 
