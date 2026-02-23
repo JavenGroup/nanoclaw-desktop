@@ -140,8 +140,8 @@ The `~t` separator convention: `{baseFolder}~t{topicId}`. General topic (no thre
 ## Quick Start
 
 ```bash
-git clone https://github.com/JavenGroup/nanoclaw.git
-cd nanoclaw
+git clone https://github.com/JavenGroup/nanoclaw-desktop.git
+cd nanoclaw-desktop
 claude
 ```
 
