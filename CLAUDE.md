@@ -1,6 +1,10 @@
 # NanoClaw Desktop
 
-Personal Claude assistant running on a real macOS desktop. See [README.md](README.md) for architecture and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for design decisions.
+Personal Claude assistant running on a real macOS desktop.
+
+**IMPORTANT: Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before modifying code.** It describes the full system: runtime parity, VirtioFS path mapping, topic isolation, IPC protocol, message flow, and concurrency model. This is the authoritative design document — not SPEC.md (which describes upstream only).
+
+See also: [README.md](README.md) for user-facing docs, [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for upstream design philosophy.
 
 ## Quick Context
 
