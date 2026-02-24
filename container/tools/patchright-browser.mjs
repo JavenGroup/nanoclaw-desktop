@@ -261,6 +261,8 @@ try {
       console.error('Commands: open, screenshot, html, text, click, type, eval, close, status');
       process.exit(1);
   }
+  // Disconnect from CDP WebSocket so Node can exit
+  process.exit(0);
 } catch (err) {
   console.error(`Error: ${err.message}`);
   process.exit(1);
