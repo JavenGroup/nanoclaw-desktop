@@ -237,7 +237,11 @@ function buildSshCommand(
   isMain: boolean,
   effectiveFolder: string,
 ): string[] {
-  const ws = LUME_WORKSPACE;
+  // CRITICAL: Each container gets its own workspace directory.
+  // Without this, concurrent containers overwrite each other's symlinks,
+  // causing IPC messages (and agent output) to route to the wrong chat.
+  const safeName = effectiveFolder.replace(/[^a-zA-Z0-9-]/g, '-');
+  const ws = `${LUME_WORKSPACE}/${safeName}`;
   const shared = VM_SHARED_DIR;
 
   // Build a setup script that creates the workspace symlink structure:
@@ -251,7 +255,7 @@ function buildSshCommand(
   const authEnv = getAuthEnvVars();
   if (authEnv) parts.push(authEnv);
 
-  // Setup symlinks
+  // Setup symlinks (each container has its own ws dir, so no cross-contamination)
   parts.push(
     `mkdir -p "${ws}"`,
     `rm -rf "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions" "${ws}/agent-runner"`,
@@ -260,9 +264,11 @@ function buildSshCommand(
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
     `ln -sf "${shared}/data/sessions/${effectiveFolder}" "${ws}/sessions"`,
     `ln -sf "${shared}/container/agent-runner" "${ws}/agent-runner"`,
-    // Symlink .claude to per-group session so Claude Code SDK finds settings/skills
-    `rm -rf "/Users/${LUME_VM_USER}/.claude"`,
-    `ln -sf "${shared}/data/sessions/${effectiveFolder}/.claude" "/Users/${LUME_VM_USER}/.claude"`,
+    // Symlink .claude into the group dir so Claude Code SDK finds settings/skills
+    // via the 'project' settings source (cwd = {ws}/group/).
+    // This avoids racing on ~/.claude which is shared across all containers.
+    `rm -f "${ws}/group/.claude"`,
+    `ln -sf "${shared}/data/sessions/${effectiveFolder}/.claude" "${ws}/group/.claude"`,
   );
 
   // Main gets the project root symlink for full access
