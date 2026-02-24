@@ -5,6 +5,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  GROUPS_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -30,6 +31,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  migrateRegisteredGroupJid,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -486,10 +488,41 @@ function ensureContainerSystemRunning(): void {
   }
 }
 
+/**
+ * Generate CLAUDE.md files from .default templates if they don't exist.
+ * Replaces the default persona name "Andy" with ASSISTANT_NAME from .env.
+ */
+function generateClaudeMdFiles(): void {
+  const pairs = [
+    { dir: 'global', file: 'CLAUDE.md' },
+    { dir: 'main', file: 'CLAUDE.md' },
+  ];
+
+  for (const { dir, file } of pairs) {
+    const target = path.join(GROUPS_DIR, dir, file);
+    const template = `${target}.default`;
+
+    if (fs.existsSync(target)) continue;
+    if (!fs.existsSync(template)) {
+      logger.warn({ template }, 'Template not found, skipping CLAUDE.md generation');
+      continue;
+    }
+
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    let content = fs.readFileSync(template, 'utf-8');
+    if (ASSISTANT_NAME !== 'Andy') {
+      content = content.replaceAll('Andy', ASSISTANT_NAME);
+    }
+    fs.writeFileSync(target, content, 'utf-8');
+    logger.info({ target, name: ASSISTANT_NAME }, 'Generated CLAUDE.md from template');
+  }
+}
+
 async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  generateClaudeMdFiles();
 
   // Start runtimes based on what registered groups actually use
   const groups = getAllRegisteredGroups();
@@ -534,7 +567,19 @@ async function main(): Promise<void> {
   }
 
   if (TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, {
+      ...channelOpts,
+      onMigrateGroup: (oldJid, newJid) => {
+        if (migrateRegisteredGroupJid(oldJid, newJid)) {
+          const group = registeredGroups[oldJid];
+          if (group) {
+            registeredGroups[newJid] = group;
+            delete registeredGroups[oldJid];
+          }
+          logger.info({ oldJid, newJid }, 'Group registration migrated to supergroup ID');
+        }
+      },
+    });
     channels.push(telegram);
     await telegram.connect();
   }

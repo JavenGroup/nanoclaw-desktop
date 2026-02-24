@@ -266,8 +266,11 @@ function buildSshCommand(
   );
 
   // Main gets the project root symlink for full access
+  // Must rm first: if project already exists as a symlink-to-directory,
+  // ln -sf would create the new link *inside* the directory (not replace it),
+  // causing /Volumes/My Shared Files/My Shared Files to appear on the host.
   if (isMain) {
-    parts.push(`ln -sf "${shared}" "${ws}/project"`);
+    parts.push(`rm -rf "${ws}/project"`, `ln -sf "${shared}" "${ws}/project"`);
   }
 
   // Run agent-runner with browser support (headed mode for anti-detection)

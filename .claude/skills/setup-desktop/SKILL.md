@@ -33,7 +33,7 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 
 10. **Telegram bot privacy**: Bots in groups can only see `/commands` by default. User must either disable privacy via BotFather (`/setprivacy` → Disable) or make bot a group admin. Tell them BEFORE testing.
 
-11. **Three files need the assistant name**: When changing from "Andy" to a custom name, update ALL of: `src/config.ts`, `groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`. Missing any one causes the bot to introduce itself with the wrong name.
+11. **Assistant name is set via `.env`**: Set `ASSISTANT_NAME=YourName` in `.env`. The `CLAUDE.md` persona files are auto-generated from `.default` templates on startup. No need to manually edit them.
 
 12. **Bot must be running for `/chatid`**: The bot only responds to `/chatid` when NanoClaw is running. Build and start it (`npx tsx --env-file=.env src/index.ts`) BEFORE asking the user to send `/chatid`.
 
@@ -46,6 +46,8 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 16. **DM (private chat) must be registered separately**: The group chat ID (negative, e.g. `tg:-1234567890`) and the DM chat ID (positive, e.g. `tg:1234567890`) are completely different. If the user wants both group and DM to work, register both with separate folders and both with `requires_trigger=0`.
 
 17. **Telegram long-polling can go stale**: After the bot runs for a long time, the Telegram polling connection may silently drop. Messages arrive but the bot doesn't see them. The launchd `KeepAlive` auto-restarts on crash, but silent polling failures don't crash. If the user reports "no response", first try restarting the service.
+
+18. **Enabling Forum Topics changes the chat ID**: When Forum Topics are enabled on a Telegram group, Telegram converts it to a supergroup with a **completely new chat ID** (e.g. `-5275811457` → `-1003766556846`). The old registered JID becomes stale and all messages are silently dropped. NanoClaw auto-migrates if it sees the `migrate_to_chat_id` event, but if topics were enabled while the bot was offline, you must manually update: `sqlite3 store/messages.db "UPDATE registered_groups SET jid = 'tg:NEW_ID' WHERE jid = 'tg:OLD_ID';"`. Use `/chatid` in the group to get the new ID.
 
 ---
 
@@ -393,14 +395,20 @@ sqlite3 store/messages.db "SELECT jid, name, folder, requires_trigger FROM regis
 - Each chat MUST have a unique `folder` value — two chats cannot share the same folder
 - Group with Forum Topics: each topic auto-creates its own isolated workspace under the group's folder
 
-### 5c. Update assistant name if not "Andy"
+### 5c. Set assistant name in .env
 
-If the user chose a name other than `Andy`, update ALL of these files:
-1. `src/config.ts` — change the `ASSISTANT_NAME` default
-2. `groups/global/CLAUDE.md` — change the persona name and heading
-3. `groups/main/CLAUDE.md` — change the persona name and heading
+If the user chose a name other than `Andy`, add to `.env`:
 
-**All three files must be updated**, otherwise the agent will introduce itself with the wrong name.
+```
+ASSISTANT_NAME=ChosenName
+```
+
+The persona files (`groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`) are auto-generated from `.default` templates on startup, with "Andy" replaced by `ASSISTANT_NAME`. No manual file edits needed.
+
+To regenerate with a new name, delete the existing `CLAUDE.md` files and restart:
+```bash
+rm groups/global/CLAUDE.md groups/main/CLAUDE.md
+```
 
 ## 6. Configure launchd Service (Optional)
 
@@ -518,8 +526,8 @@ Tell the user:
 - Check that `TELEGRAM_ONLY=true` is in `.env`
 
 **Bot responds with wrong name:**
-- Check ALL persona files: `groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`, and `src/config.ts`
-- All three must have the correct assistant name
+- Check `ASSISTANT_NAME` in `.env` is set correctly
+- Delete `groups/global/CLAUDE.md` and `groups/main/CLAUDE.md`, then restart — they'll regenerate from `.default` templates with the correct name
 
 **Messages going to wrong topic:**
 - This shouldn't happen — each topic auto-creates its own workspace

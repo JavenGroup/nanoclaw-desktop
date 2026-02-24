@@ -21,7 +21,8 @@ Single Node.js process that connects to Telegram, routes messages to Claude Code
 | `src/task-scheduler.ts` | Runs scheduled tasks (runtime-aware) |
 | `src/types.ts` | Topic isolation helpers (`getEffectiveFolder`, `getBaseFolder`) |
 | `src/db.ts` | SQLite operations |
-| `groups/*/CLAUDE.md` | Per-project memory (isolated per topic) |
+| `groups/*/CLAUDE.md.default` | Persona templates (tracked in git, "Andy" default) |
+| `groups/*/CLAUDE.md` | Per-project memory (generated from .default, gitignored) |
 
 ## Skills
 

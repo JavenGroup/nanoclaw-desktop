@@ -532,6 +532,16 @@ export function setRegisteredGroup(
   );
 }
 
+export function migrateRegisteredGroupJid(
+  oldJid: string,
+  newJid: string,
+): boolean {
+  const result = db
+    .prepare('UPDATE registered_groups SET jid = ? WHERE jid = ?')
+    .run(newJid, oldJid);
+  return result.changes > 0;
+}
+
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const rows = db
     .prepare('SELECT * FROM registered_groups')

@@ -15,8 +15,8 @@ groups/*
 !groups/global/
 groups/main/*
 groups/global/*
-!groups/main/CLAUDE.md
-!groups/global/CLAUDE.md
+!groups/main/CLAUDE.md.default
+!groups/global/CLAUDE.md.default
 
 # Database
 *.db
@@ -36,3 +36,6 @@ groups/global/*
 .vscode/
 
 agents-sdk-docs
+
+# Lume VirtioFS mount point (created by macOS when VM mounts shared dir)
+My Shared Files

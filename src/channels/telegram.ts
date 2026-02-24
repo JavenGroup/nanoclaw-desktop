@@ -32,6 +32,7 @@ export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onMigrateGroup?: (oldJid: string, newJid: string) => void;
 }
 
 export class TelegramChannel implements Channel {
@@ -127,9 +128,9 @@ export class TelegramChannel implements Channel {
       const groups = this.opts.registeredGroups();
       const group = groups[chatJid] || groups[base];
       if (!group) {
-        logger.debug(
-          { chatJid, chatName },
-          'Message from unregistered Telegram chat',
+        logger.warn(
+          { chatJid, chatName, chatType: ctx.chat.type, isForum: (ctx.chat as any).is_forum },
+          'Message from unregistered Telegram chat (register with /chatid)',
         );
         return;
       }
@@ -156,7 +157,10 @@ export class TelegramChannel implements Channel {
       const chatJid = buildTopicJid(ctx.chat.id, threadId);
       const groups = this.opts.registeredGroups();
       const group = groups[chatJid] || groups[stripTopicSuffix(chatJid)];
-      if (!group) return;
+      if (!group) {
+        logger.warn({ chatJid }, 'Non-text message from unregistered Telegram chat');
+        return;
+      }
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
@@ -196,6 +200,20 @@ export class TelegramChannel implements Channel {
     });
     this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
+
+    // Handle group → supergroup migration (e.g. when Forum Topics are enabled)
+    this.bot.on('message:migrate_to_chat_id', (ctx) => {
+      const oldId = ctx.chat.id;
+      const newId = (ctx.message as any).migrate_to_chat_id as number;
+      const oldJid = `tg:${oldId}`;
+      const newJid = `tg:${newId}`;
+
+      const groups = this.opts.registeredGroups();
+      if (groups[oldJid] && this.opts.onMigrateGroup) {
+        logger.info({ oldJid, newJid }, 'Telegram group migrated to supergroup, updating registration');
+        this.opts.onMigrateGroup(oldJid, newJid);
+      }
+    });
 
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
