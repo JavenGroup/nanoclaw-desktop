@@ -330,7 +330,7 @@ On first run, NanoClaw reads `data/registered_groups.json`, migrates it into SQL
 **Always register both DM and Group.** Each entry MUST have a unique `folder` value.
 
 - **DM** (`folder: "main"`): admin channel with elevated privileges, `requiresTrigger: false`
-- **Group** (`folder: "projects"`): project channel with per-topic isolation
+- **Group** (`folder: "workspace"`): working channel with per-topic isolation
 
 Ask the user whether the group needs a trigger word:
 > Does your Telegram group have other people besides you and the bot?
@@ -351,7 +351,7 @@ Write `data/registered_groups.json`:
   },
   "GROUP_CHAT_JID": {
     "name": "GROUP_NAME",
-    "folder": "projects",
+    "folder": "workspace",
     "trigger": "@ASSISTANT_NAME",
     "added_at": "CURRENT_ISO_TIMESTAMP",
     "runtime": "lume",
@@ -362,7 +362,7 @@ Write `data/registered_groups.json`:
 
 Create the project folder:
 ```bash
-mkdir -p groups/projects
+mkdir -p groups/workspace
 ```
 
 The JSON will be auto-migrated to SQLite on first startup.
@@ -380,7 +380,7 @@ sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
 -- Project group channel (set requires_trigger=1 if group has other people, 0 if just user+bot)
 sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
   (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime)
-  VALUES ('GROUP_CHAT_JID', 'GROUP_NAME', 'projects', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume');"
+  VALUES ('GROUP_CHAT_JID', 'GROUP_NAME', 'workspace', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume');"
 ```
 
 Verify:
