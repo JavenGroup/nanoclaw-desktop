@@ -3,11 +3,15 @@
  * Patchright Browser Tool
  * Anti-detection browser automation using Patchright (undetected Playwright fork).
  *
+ * Browser profile is persisted per-conversation via Chromium's --user-data-dir.
+ * Chromium is spawned as a detached process and controlled via CDP, so it survives
+ * Node process exits — login state and open pages persist across tool invocations.
+ *
  * Usage:
  *   patchright-browser open <url>           Open URL in headed Chromium
- *   patchright-browser screenshot <url>     Take screenshot, save to /tmp/screenshot.png
- *   patchright-browser html <url>           Print page HTML
- *   patchright-browser text <url>           Print visible text
+ *   patchright-browser screenshot [url]     Take screenshot (optionally navigate first)
+ *   patchright-browser html [url]           Print page HTML
+ *   patchright-browser text [url]           Print visible text
  *   patchright-browser click <selector>     Click element (requires open page)
  *   patchright-browser type <selector> <text>  Type into element
  *   patchright-browser eval <js>            Evaluate JavaScript on current page
@@ -16,11 +20,18 @@
  */
 
 import { chromium } from 'patchright';
+import { spawn } from 'child_process';
+import net from 'net';
 import fs from 'fs';
 import path from 'path';
+import http from 'http';
 
-const STATE_FILE = '/tmp/patchright-state.json';
-const SCREENSHOT_DIR = '/tmp';
+const WORKSPACE_BASE = process.env.WORKSPACE_BASE || '/tmp';
+const PROFILE_DIR = path.join(WORKSPACE_BASE, 'group', '.browser-data');
+const STATE_FILE = path.join(PROFILE_DIR, '.state.json');
+const SCREENSHOT_DIR = path.join(WORKSPACE_BASE, 'group');
+
+// --- State management ---
 
 function loadState() {
   try {
@@ -31,63 +42,101 @@ function loadState() {
   return null;
 }
 
-function saveState(wsEndpoint, pid) {
-  fs.writeFileSync(STATE_FILE, JSON.stringify({ wsEndpoint, pid }));
+function saveState(port, pid) {
+  fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  fs.writeFileSync(STATE_FILE, JSON.stringify({ port, pid }));
 }
 
 function clearState() {
   try { fs.unlinkSync(STATE_FILE); } catch {}
 }
 
-async function getBrowser() {
-  const state = loadState();
-  if (!state) return null;
-  try {
-    return await chromium.connectOverCDP(state.wsEndpoint);
-  } catch {
-    clearState();
-    return null;
-  }
-}
+// --- CDP helpers ---
 
-async function launchBrowser() {
-  const browser = await chromium.launch({
-    headless: false,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-first-run',
-      '--no-default-browser-check',
-    ],
+/** Check if Chrome's CDP endpoint is reachable */
+function isCdpAlive(port) {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => resolve(res.statusCode === 200));
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(2000, () => { req.destroy(); resolve(false); });
   });
-
-  // Get CDP endpoint for reconnection
-  const wsEndpoint = browser.contexts()[0]?.pages()[0]?.url() || '';
-  // Save PID-like info for reconnection
-  const cdpUrl = `http://127.0.0.1:${browser._initializer?.connectedBrowser?.pid || 0}`;
-
-  return browser;
 }
 
-async function ensureBrowser(url) {
-  let browser = await getBrowser();
-  if (!browser) {
-    browser = await chromium.launch({
-      headless: false,
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-first-run',
-        '--no-default-browser-check',
-      ],
+/** Wait for Chrome's debug port to become available */
+async function waitForCdpReady(port, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isCdpAlive(port)) return;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  throw new Error(`Chrome CDP not ready on port ${port} after ${timeoutMs}ms`);
+}
+
+/** Find an available TCP port */
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
     });
+    server.on('error', reject);
+  });
+}
+
+// --- Browser lifecycle ---
+
+/** Spawn a detached Chromium process with persistent profile and CDP */
+function spawnChromium(debugPort) {
+  fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  const execPath = chromium.executablePath();
+  const child = spawn(execPath, [
+    `--user-data-dir=${PROFILE_DIR}`,
+    `--remote-debugging-port=${debugPort}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--lang=zh-CN',
+    '--window-size=1280,800',
+    'about:blank',
+  ], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  return child;
+}
+
+/** Connect to existing browser or launch a new one */
+async function ensureBrowser(url) {
+  let port;
+  const state = loadState();
+
+  // Try reconnecting to existing browser
+  if (state?.port && await isCdpAlive(state.port)) {
+    port = state.port;
+  } else {
+    // Launch a new detached Chromium process
+    clearState();
+    port = await findFreePort();
+    const child = spawnChromium(port);
+    await waitForCdpReady(port);
+    saveState(port, child.pid);
   }
 
-  let context = browser.contexts()[0];
+  // connectOverCDP auto-discovers wsUrl from http endpoint
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+
+  // Use the default context (tied to --user-data-dir, survives disconnection)
+  const context = browser.contexts()[0];
   if (!context) {
-    context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      locale: 'zh-CN',
-      timezoneId: 'Asia/Shanghai',
-    });
+    throw new Error('No default browser context found after CDP connection');
   }
 
   let page = context.pages()[0];
@@ -102,6 +151,8 @@ async function ensureBrowser(url) {
   return { browser, context, page };
 }
 
+// --- Command dispatch ---
+
 const [,, command, ...args] = process.argv;
 
 try {
@@ -113,15 +164,15 @@ try {
       const title = await page.title();
       console.log(`Opened: ${url}`);
       console.log(`Title: ${title}`);
-      // Keep browser running — don't close
-      // Disconnect without closing
+      console.log(`Profile: ${PROFILE_DIR}`);
       break;
     }
 
     case 'screenshot': {
       const url = args[0];
       const { page } = await ensureBrowser(url);
-      if (url) await page.waitForTimeout(2000); // Wait for render
+      if (url) await page.waitForTimeout(2000);
+      fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
       const filePath = path.join(SCREENSHOT_DIR, `screenshot-${Date.now()}.png`);
       await page.screenshot({ path: filePath, fullPage: false });
       console.log(`Screenshot saved: ${filePath}`);
@@ -131,16 +182,14 @@ try {
     case 'html': {
       const url = args[0];
       const { page } = await ensureBrowser(url);
-      const html = await page.content();
-      console.log(html);
+      console.log(await page.content());
       break;
     }
 
     case 'text': {
       const url = args[0];
       const { page } = await ensureBrowser(url);
-      const text = await page.evaluate(() => document.body.innerText);
-      console.log(text);
+      console.log(await page.evaluate(() => document.body.innerText));
       break;
     }
 
@@ -173,12 +222,18 @@ try {
     }
 
     case 'close': {
-      const browser = await getBrowser();
-      if (browser) {
+      const state = loadState();
+      if (state?.port && await isCdpAlive(state.port)) {
+        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${state.port}`);
         await browser.close();
         clearState();
         console.log('Browser closed.');
       } else {
+        // Kill stale process if PID is known
+        if (state?.pid) {
+          try { process.kill(state.pid, 'SIGTERM'); } catch {}
+        }
+        clearState();
         console.log('No browser running.');
       }
       break;
@@ -186,18 +241,16 @@ try {
 
     case 'status': {
       const state = loadState();
-      if (state) {
-        const browser = await getBrowser();
-        if (browser) {
-          const pages = browser.contexts().flatMap(c => c.pages());
-          console.log(`Browser running. Pages: ${pages.length}`);
-          for (const p of pages) {
-            console.log(`  - ${await p.title()} (${p.url()})`);
-          }
-        } else {
-          console.log('Browser state exists but not reachable.');
+      if (state?.port && await isCdpAlive(state.port)) {
+        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${state.port}`);
+        const pages = browser.contexts().flatMap(c => c.pages());
+        console.log(`Browser running (port ${state.port}). Pages: ${pages.length}`);
+        console.log(`Profile: ${PROFILE_DIR}`);
+        for (const p of pages) {
+          console.log(`  - ${await p.title()} (${p.url()})`);
         }
       } else {
+        if (state) clearState();
         console.log('No browser running.');
       }
       break;
