@@ -283,7 +283,7 @@ function buildSshCommand(
   // Dynamically find Chromium instead of hardcoding version
   const browserPath = `$(find /Users/${LUME_VM_USER}/Library/Caches/ms-playwright -name 'Google Chrome for Testing' -type f 2>/dev/null | head -1)`;
   parts.push(
-    `cd "${ws}" && WORKSPACE_BASE="${ws}" AGENT_BROWSER_EXECUTABLE_PATH="${browserPath}" AGENT_BROWSER_HEADED=1 PATH="${ws}/tools/node_modules/.bin:${ws}/tools:/Users/${LUME_VM_USER}/local/bin:/opt/homebrew/bin:$HOME/local/bin:$PATH" node "${ws}/agent-runner/dist/index.js"`,
+    `cd "${ws}" && WORKSPACE_BASE="${ws}" AGENT_BROWSER_EXECUTABLE_PATH="${browserPath}" AGENT_BROWSER_HEADED=1 BROWSER_LANG="${process.env.BROWSER_LANG || 'zh-TW'}" BROWSER_TIMEZONE="${process.env.BROWSER_TIMEZONE || 'Asia/Taipei'}" PATH="${ws}/tools/node_modules/.bin:${ws}/tools:/Users/${LUME_VM_USER}/local/bin:/opt/homebrew/bin:$HOME/local/bin:$PATH" node "${ws}/agent-runner/dist/index.js"`,
   );
 
   return [

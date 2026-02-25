@@ -30,6 +30,138 @@ const WORKSPACE_BASE = process.env.WORKSPACE_BASE || '/tmp';
 const PROFILE_DIR = path.join(WORKSPACE_BASE, 'group', '.browser-data');
 const STATE_FILE = path.join(PROFILE_DIR, '.state.json');
 const SCREENSHOT_DIR = path.join(WORKSPACE_BASE, 'group');
+const BROWSER_LANG = process.env.BROWSER_LANG || 'zh-TW';
+const BROWSER_TIMEZONE = process.env.BROWSER_TIMEZONE || 'Asia/Taipei';
+
+// --- Fingerprint diversification ---
+// Deterministic per-topic: same topic always gets same fingerprint, different topics differ.
+
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function seededRandom(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+function generateFingerprint(workspacePath) {
+  const seed = hashString(workspacePath);
+  const rng = seededRandom(seed);
+  return {
+    windowWidth: 1280 + Math.floor(rng() * 61) - 30,   // 1250–1310
+    windowHeight: 800 + Math.floor(rng() * 41) - 20,    // 780–820
+    screenWidth: 1440 + Math.floor(rng() * 5) * 80,     // 1440/1520/1600/1680/1760
+    screenHeight: 900 + Math.floor(rng() * 5) * 60,     // 900/960/1020/1080/1140
+    uaPatch: 50 + Math.floor(rng() * 50),               // 50–99
+    canvasSeed: Math.floor(rng() * 1000000),
+    webglSuffix: Math.floor(rng() * 90) + 10,           // 10–99
+    hardwareConcurrency: [4, 6, 8, 10, 12][Math.floor(rng() * 5)],
+    deviceMemory: [6, 8, 10, 12][Math.floor(rng() * 4)],
+    audioNoiseSeed: Math.floor(rng() * 1000000),
+  };
+}
+
+const FP = generateFingerprint(WORKSPACE_BASE);
+
+const FINGERPRINT_INIT_SCRIPT = `
+(function() {
+  const seed = ${FP.canvasSeed};
+  let state = seed;
+  function next() { state = (state * 1664525 + 1013904223) & 0x7fffffff; return state / 0x7fffffff; }
+
+  // --- Screen resolution ---
+  Object.defineProperty(screen, 'width', { get: () => ${FP.screenWidth} });
+  Object.defineProperty(screen, 'height', { get: () => ${FP.screenHeight} });
+  Object.defineProperty(screen, 'availWidth', { get: () => ${FP.screenWidth} });
+  Object.defineProperty(screen, 'availHeight', { get: () => ${FP.screenHeight} - 25 });
+  Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+
+  // --- Hardware ---
+  Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => ${FP.hardwareConcurrency} });
+  Object.defineProperty(navigator, 'deviceMemory', { get: () => ${FP.deviceMemory} });
+
+  // --- User-Agent (JS level) ---
+  const uaPatch = ${FP.uaPatch};
+  const origUA = navigator.userAgent;
+  const newUA = origUA.replace(/Chrome\\/(\\d+\\.\\d+\\.\\d+)\\.\\d+/, 'Chrome/$1.' + uaPatch);
+  Object.defineProperty(navigator, 'userAgent', { get: () => newUA });
+  Object.defineProperty(navigator, 'appVersion', { get: () => newUA.replace('Mozilla/', '') });
+
+  // --- Canvas fingerprint noise (non-destructive, operates on clone) ---
+  function addNoise(canvas) {
+    try {
+      const clone = document.createElement('canvas');
+      clone.width = canvas.width;
+      clone.height = canvas.height;
+      const ctx = clone.getContext('2d');
+      if (!ctx || canvas.width === 0 || canvas.height === 0) return null;
+      ctx.drawImage(canvas, 0, 0);
+      const img = ctx.getImageData(0, 0, clone.width, clone.height);
+      for (let i = 0; i < 10; i++) {
+        const px = Math.floor(next() * img.data.length / 4) * 4;
+        img.data[px] = (img.data[px] + 1) & 0xff;
+      }
+      ctx.putImageData(img, 0, 0);
+      return clone;
+    } catch { return null; }
+  }
+
+  const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+  HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+    const clone = addNoise(this);
+    return origToDataURL.call(clone || this, type, quality);
+  };
+
+  const origToBlob = HTMLCanvasElement.prototype.toBlob;
+  HTMLCanvasElement.prototype.toBlob = function(cb, type, quality) {
+    const clone = addNoise(this);
+    return origToBlob.call(clone || this, cb, type, quality);
+  };
+
+  // --- WebGL noise (renderer + vendor) ---
+  const UNMASKED_RENDERER = 0x9246;
+  const UNMASKED_VENDOR = 0x9245;
+  function patchGetParameter(proto) {
+    const orig = proto.getParameter;
+    proto.getParameter = function(p) {
+      const val = orig.call(this, p);
+      if (p === UNMASKED_RENDERER && typeof val === 'string') return val + ' (v1.${FP.webglSuffix})';
+      if (p === UNMASKED_VENDOR && typeof val === 'string') return val + ', Inc.';
+      return val;
+    };
+  }
+  patchGetParameter(WebGLRenderingContext.prototype);
+  if (typeof WebGL2RenderingContext !== 'undefined') patchGetParameter(WebGL2RenderingContext.prototype);
+
+  // --- AudioContext fingerprint noise ---
+  const audioSeed = ${FP.audioNoiseSeed};
+  let audioState = audioSeed;
+  function audioNext() { audioState = (audioState * 1664525 + 1013904223) & 0x7fffffff; return (audioState / 0x7fffffff) * 0.0001; }
+
+  if (typeof AudioBuffer !== 'undefined') {
+    const origGetChannelData = AudioBuffer.prototype.getChannelData;
+    AudioBuffer.prototype.getChannelData = function(ch) {
+      const data = origGetChannelData.call(this, ch);
+      // Only add noise once per buffer (tag it)
+      if (!data._fp_noised) {
+        for (let i = 0; i < Math.min(data.length, 128); i++) {
+          data[i] += audioNext();
+        }
+        data._fp_noised = true;
+      }
+      return data;
+    };
+  }
+})();
+`;
 
 // --- State management ---
 
@@ -102,12 +234,13 @@ function spawnChromium(debugPort) {
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
-    '--lang=zh-CN',
-    '--window-size=1280,800',
+    `--lang=${BROWSER_LANG}`,
+    `--window-size=${FP.windowWidth},${FP.windowHeight}`,
     'about:blank',
   ], {
     detached: true,
     stdio: 'ignore',
+    env: { ...process.env, TZ: BROWSER_TIMEZONE },
   });
   child.unref();
   return child;
@@ -139,10 +272,35 @@ async function ensureBrowser(url) {
     throw new Error('No default browser context found after CDP connection');
   }
 
+  // Inject fingerprint diversification (Canvas/WebGL noise, UA override at JS level)
+  await context.addInitScript(FINGERPRINT_INIT_SCRIPT);
+
+  // Build diversified UA from the real browser UA (not hardcoded)
+  let diversifiedUA = '';
+  try {
+    const tmpPage = context.pages()[0] || await context.newPage();
+    const cdp = await context.newCDPSession(tmpPage);
+    const { userAgent: realUA } = await cdp.send('Browser.getVersion');
+    diversifiedUA = realUA.replace(/Chrome\/(\d+\.\d+\.\d+)\.\d+/, `Chrome/$1.${FP.uaPatch}`);
+  } catch {}
+
+  // Apply HTTP-level UA override to each page (covers User-Agent header)
+  async function applyHttpUA(p) {
+    if (!diversifiedUA) return;
+    try {
+      const cdp = await context.newCDPSession(p);
+      await cdp.send('Network.setUserAgentOverride', { userAgent: diversifiedUA });
+    } catch {}
+  }
+
   let page = context.pages()[0];
   if (!page) {
     page = await context.newPage();
   }
+  await applyHttpUA(page);
+
+  // Also apply to future pages opened in this context
+  context.on('page', applyHttpUA);
 
   if (url) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
