@@ -1,0 +1,9 @@
+{
+  "name": "nanoclaw-tools",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "patchright": "^1.51.1"
+  }
+}

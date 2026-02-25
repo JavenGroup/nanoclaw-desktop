@@ -547,10 +547,14 @@ async function main(): Promise<void> {
     ensureContainerSystemRunning();
   }
 
+  let cleanupLume: (() => void) | null = null;
+
   if (runtimes.has('lume')) {
     try {
-      const { ensureLumeVmRunning } = await import('./lume-runner.js');
+      const { ensureLumeVmRunning, cleanupLumeAgentProcesses } = await import('./lume-runner.js');
       ensureLumeVmRunning();
+      cleanupLumeAgentProcesses();
+      cleanupLume = cleanupLumeAgentProcesses;
     } catch {
       // Lume not available
     }
@@ -560,6 +564,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
+    cleanupLume?.();
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };

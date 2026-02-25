@@ -86,6 +86,24 @@ function getLumeVmIp(): string {
   );
 }
 
+/**
+ * Kill orphaned agent processes in the Lume VM.
+ * Called at startup (to clean up after a crash) and shutdown (to prevent orphans).
+ * Best-effort — logs warnings but never throws.
+ */
+export function cleanupLumeAgentProcesses(): void {
+  try {
+    const ip = getLumeVmIp();
+    execSync(
+      `ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no ${LUME_VM_USER}@${ip} "pkill -f 'agent-runner/dist/index' ; pkill -f 'ipc-mcp-stdio' ; pkill claude ; true"`,
+      { timeout: 5000, stdio: 'pipe' },
+    );
+    logger.info({ ip }, 'Killed orphaned agent processes in Lume VM');
+  } catch (err) {
+    logger.warn({ err }, 'Failed to clean up Lume VM agent processes (VM may be unreachable)');
+  }
+}
+
 /** Check that the Lume VM is running and reachable. */
 export function ensureLumeVmRunning(): void {
   // First, check if SSH is already reachable (VM may be running even if lume reports stopped)
@@ -258,12 +276,13 @@ function buildSshCommand(
   // Setup symlinks (each container has its own ws dir, so no cross-contamination)
   parts.push(
     `mkdir -p "${ws}"`,
-    `rm -rf "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions" "${ws}/agent-runner"`,
+    `rm -rf "${ws}/group" "${ws}/ipc" "${ws}/global" "${ws}/sessions" "${ws}/agent-runner" "${ws}/tools"`,
     `ln -sf "${shared}/groups/${effectiveFolder}" "${ws}/group"`,
     `ln -sf "${shared}/data/ipc/${effectiveFolder}" "${ws}/ipc"`,
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
     `ln -sf "${shared}/data/sessions/${effectiveFolder}" "${ws}/sessions"`,
     `ln -sf "/Users/${LUME_VM_USER}/local/agent-runner" "${ws}/agent-runner"`,
+    `ln -sf "/Users/${LUME_VM_USER}/local/tools" "${ws}/tools"`,
     // Symlink .claude into the group dir so Claude Code SDK finds settings/skills
     // via the 'project' settings source (cwd = {ws}/group/).
     // This avoids racing on ~/.claude which is shared across all containers.

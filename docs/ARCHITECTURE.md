@@ -27,7 +27,8 @@ NanoClaw Desktop is a personal Claude assistant running on macOS. A single Node.
 │     ├── ipc/     → shared/data/ipc/{effectiveFolder}/                  │
 │     ├── sessions/→ shared/data/sessions/{effectiveFolder}/             │
 │     ├── project/ → shared/ (main only)                                 │
-│     └── agent-runner/ → shared/container/agent-runner/                 │
+│     ├── agent-runner/ → ~/local/agent-runner/  (SCP deploy)            │
+│     └── tools/        → ~/local/tools/         (SCP deploy)            │
 │                                                                        │
 │   ~/.claude/    → shared/data/sessions/{effectiveFolder}/.claude       │
 │                    (settings.json, skills/, session transcripts)        │
@@ -77,7 +78,8 @@ Both runtimes must perform the same initialization before launching the agent-ru
 | Mount sessions | `-v data/sessions/{ef}/.claude:/home/node/.claude` | `ln -sf shared/data/sessions/{ef} ws/sessions` |
 | Set `~/.claude` | Implicit (mount target IS `$HOME/.claude`) | `rm -rf ~/.claude && ln -sf .../.claude ~/.claude` |
 | Mount project root | `-v projectRoot:/workspace/project` (main only) | `rm -rf ws/project && ln -sf shared ws/project` (main) |
-| Mount agent-runner | `--mount ...,target=/app/src,readonly` | `ln -sf shared/container/agent-runner ws/agent-runner` |
+| Mount agent-runner | `--mount ...,target=/app/src,readonly` | `ln -sf ~/local/agent-runner ws/agent-runner` (SCP deploy) |
+| Mount tools | N/A (tools in container image) | `ln -sf ~/local/tools ws/tools` (SCP deploy) |
 | Auth env vars | Filtered `.env` → mounted file, sourced | SSH exports from host `.env` |
 | Browser path | N/A (container has Chromium pre-installed) | Dynamic `find` in ms-playwright cache |
 
@@ -101,14 +103,17 @@ HOST PATH                                    VM PATH (via VirtioFS)
 │   ├── settings.json                    │
 │   ├── skills/                          │
 │   └── *.jsonl (session transcripts)    │
-└── container/agent-runner/              →   ~/workspace/agent-runner/ (symlink)
+├── container/agent-runner/  (source)   →   ~/local/agent-runner/  (SCP deploy)
+│                                       →   ~/workspace/agent-runner/ (symlink → ~/local/...)
+└── container/tools/        (source)    →   ~/local/tools/         (SCP deploy)
+                                        →   ~/workspace/tools/ (symlink → ~/local/...)
 
 Notation: {ef} = effectiveFolder (e.g. "andy-workspace~t16")
 ```
 
 ### VirtioFS Caveats
 
-- **Caching:** VirtioFS caches aggressively. After rebuilding `agent-runner/dist/`, the VM may still read stale files. Run `sudo purge` inside the VM or restart it.
+- **Caching:** VirtioFS caches aggressively. After rebuilding files on the host, the VM may still read stale content. **Code paths** (agent-runner, tools) are deployed via SCP to `~/local/` on the VM to bypass this — see `container/agent-runner/deploy.sh` and `container/tools/deploy.sh`. **Data paths** (groups, IPC, sessions) work fine over VirtioFS since they're written fresh at runtime.
 - **Symlink into symlink:** `ln -sf target existing-symlink-to-dir` creates the link *inside* the directory instead of replacing it. Always `rm -rf` before `ln -sf`.
 
 ## Topic Isolation Model
@@ -382,3 +387,6 @@ SQLite at `store/messages.db`:
 | `src/db.ts` | SQLite ops | All CRUD, `migrateRegisteredGroupJid()` |
 | `container/agent-runner/src/index.ts` | Agent entry point | `runQuery()`, `MessageStream`, `drainIpcInput()` |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | MCP tools for agent | `send_message`, `schedule_task`, `send_photo`, etc. |
+| `container/agent-runner/deploy.sh` | SCP agent-runner to VM | Bypasses VirtioFS cache |
+| `container/tools/patchright-browser.mjs` | Anti-detection browser tool | Snapshot/refs, click, fill, screenshot, etc. |
+| `container/tools/deploy.sh` | SCP browser tool to VM | Bypasses VirtioFS cache |
