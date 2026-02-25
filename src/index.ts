@@ -551,8 +551,9 @@ async function main(): Promise<void> {
 
   if (runtimes.has('lume')) {
     try {
-      const { ensureLumeVmRunning, cleanupLumeAgentProcesses } = await import('./lume-runner.js');
+      const { ensureLumeVmRunning, cleanupLumeAgentProcesses, syncVmLocalFiles } = await import('./lume-runner.js');
       ensureLumeVmRunning();
+      syncVmLocalFiles();
       cleanupLumeAgentProcesses();
       cleanupLume = cleanupLumeAgentProcesses;
     } catch {

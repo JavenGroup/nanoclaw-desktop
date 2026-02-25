@@ -26,6 +26,9 @@ $SSH "mkdir -p ${REMOTE_DIR}"
 $SCP "$SCRIPT_DIR/patchright-browser.mjs" "${LUME_VM_USER}@${LUME_VM_IP}:${REMOTE_DIR}/patchright-browser.mjs"
 $SCP "$SCRIPT_DIR/package.json" "${LUME_VM_USER}@${LUME_VM_IP}:${REMOTE_DIR}/package.json"
 
+# Make executable and create PATH-friendly symlink (patchright-browser → patchright-browser.mjs)
+$SSH "chmod +x ${REMOTE_DIR}/patchright-browser.mjs && ln -sf patchright-browser.mjs ${REMOTE_DIR}/patchright-browser"
+
 # Install node_modules only if missing
 REMOTE_HAS_MODULES=$($SSH "test -d ${REMOTE_DIR}/node_modules && echo yes || echo no")
 if [[ "$REMOTE_HAS_MODULES" == "no" ]]; then

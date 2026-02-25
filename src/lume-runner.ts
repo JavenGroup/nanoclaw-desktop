@@ -104,6 +104,63 @@ export function cleanupLumeAgentProcesses(): void {
   }
 }
 
+/**
+ * Sync code paths to the VM's local storage via SCP.
+ * Bypasses VirtioFS cache — the VM always gets the latest files.
+ * Called once at startup, after the VM is confirmed reachable.
+ */
+export function syncVmLocalFiles(): void {
+  const ip = getLumeVmIp();
+  const ssh = `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${LUME_VM_USER}@${ip}`;
+  const scp = `scp -o StrictHostKeyChecking=no`;
+  const remote = (sub: string) => `/Users/${LUME_VM_USER}/local/${sub}`;
+
+  // --- agent-runner ---
+  const arLocal = path.join(PROJECT_ROOT, 'container', 'agent-runner');
+  const arDist = path.join(arLocal, 'dist');
+  const arRemote = remote('agent-runner');
+  if (fs.existsSync(path.join(arDist, 'index.js'))) {
+    try {
+      execSync(`${ssh} "mkdir -p ${arRemote}/dist"`, { timeout: 10000, stdio: 'pipe' });
+      for (const f of ['dist/index.js', 'dist/ipc-mcp-stdio.js', 'package.json']) {
+        execSync(`${scp} "${path.join(arLocal, f)}" "${LUME_VM_USER}@${ip}:${arRemote}/${f}"`, { timeout: 15000, stdio: 'pipe' });
+      }
+      // Sync node_modules only if missing on VM
+      const hasModules = execSync(`${ssh} "test -d ${arRemote}/node_modules && echo yes || echo no"`, { encoding: 'utf-8', timeout: 5000 }).trim();
+      if (hasModules === 'no') {
+        logger.info('Syncing agent-runner node_modules to VM (first deploy)...');
+        execSync(`${scp} -r "${path.join(arLocal, 'node_modules')}" "${LUME_VM_USER}@${ip}:${arRemote}/"`, { timeout: 120000, stdio: 'pipe' });
+      }
+      logger.info('Synced agent-runner to VM');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to sync agent-runner to VM');
+    }
+  }
+
+  // --- tools (patchright-browser) ---
+  const toolsLocal = path.join(PROJECT_ROOT, 'container', 'tools');
+  const toolsRemote = remote('tools');
+  if (fs.existsSync(path.join(toolsLocal, 'patchright-browser.mjs'))) {
+    try {
+      execSync(`${ssh} "mkdir -p ${toolsRemote}"`, { timeout: 10000, stdio: 'pipe' });
+      for (const f of ['patchright-browser.mjs', 'package.json']) {
+        execSync(`${scp} "${path.join(toolsLocal, f)}" "${LUME_VM_USER}@${ip}:${toolsRemote}/${f}"`, { timeout: 15000, stdio: 'pipe' });
+      }
+      // Make executable + create PATH-friendly symlink
+      execSync(`${ssh} "chmod +x ${toolsRemote}/patchright-browser.mjs && ln -sf patchright-browser.mjs ${toolsRemote}/patchright-browser"`, { timeout: 10000, stdio: 'pipe' });
+      // Install deps only if missing
+      const hasModules = execSync(`${ssh} "test -d ${toolsRemote}/node_modules && echo yes || echo no"`, { encoding: 'utf-8', timeout: 5000 }).trim();
+      if (hasModules === 'no') {
+        logger.info('Installing tools dependencies on VM...');
+        execSync(`${ssh} "cd ${toolsRemote} && PATH=\\$HOME/local/bin:/opt/homebrew/bin:\\$PATH npm install"`, { timeout: 60000, stdio: 'pipe' });
+      }
+      logger.info('Synced tools to VM');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to sync tools to VM');
+    }
+  }
+}
+
 /** Check that the Lume VM is running and reachable. */
 export function ensureLumeVmRunning(): void {
   // First, check if SSH is already reachable (VM may be running even if lume reports stopped)
