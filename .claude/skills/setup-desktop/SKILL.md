@@ -47,7 +47,9 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 
 17. **Telegram long-polling can go stale**: After the bot runs for a long time, the Telegram polling connection may silently drop. Messages arrive but the bot doesn't see them. The launchd `KeepAlive` auto-restarts on crash, but silent polling failures don't crash. If the user reports "no response", first try restarting the service.
 
-18. **Enabling Forum Topics changes the chat ID**: When Forum Topics are enabled on a Telegram group, Telegram converts it to a supergroup with a **completely new chat ID** (e.g. `-5275811457` → `-1003766556846`). The old registered JID becomes stale and all messages are silently dropped. NanoClaw auto-migrates if it sees the `migrate_to_chat_id` event, but if topics were enabled while the bot was offline, you must manually update: `sqlite3 store/messages.db "UPDATE registered_groups SET jid = 'tg:NEW_ID' WHERE jid = 'tg:OLD_ID';"`. Use `/chatid` in the group to get the new ID.
+18. **NEVER start `lume run` as a Claude Code subprocess**: `lume run` is a blocking foreground process — the VM lives only as long as it does. If started via Bash tool (even with `run_in_background`), it becomes a child of Claude Code and gets killed when the session ends, stopping the VM. For **existing VMs**, don't start `lume run` at all — NanoClaw's `ensureLumeVmRunning()` manages it automatically via detached spawn. For **fresh VMs** needing one-time manual macOS setup, the user must run `lume run` in a separate terminal (they need the display window to create the user account and enable SSH).
+
+19. **Enabling Forum Topics changes the chat ID**: When Forum Topics are enabled on a Telegram group, Telegram converts it to a supergroup with a **completely new chat ID** (e.g. `-5275811457` → `-1003766556846`). The old registered JID becomes stale and all messages are silently dropped. NanoClaw auto-migrates if it sees the `migrate_to_chat_id` event, but if topics were enabled while the bot was offline, you must manually update: `sqlite3 store/messages.db "UPDATE registered_groups SET jid = 'tg:NEW_ID' WHERE jid = 'tg:OLD_ID';"`. Use `/chatid` in the group to get the new ID.
 
 ---
 
@@ -107,12 +109,36 @@ Wait for confirmation, then verify:
 lume --version
 ```
 
-### 3b. Create and start the VM
+### 3b. Create or locate the VM
 
 Check if a VM already exists:
 ```bash
 lume ls 2>/dev/null
 ```
+
+**Important:** Lume CLI uses positional arguments, NOT `--name`:
+- Correct: `lume run my-vm`, `lume get my-vm`
+- Wrong: `lume run --name my-vm`, `lume get --name my-vm`
+- Display is on by default. There is no `--display` flag, only `--no-display`.
+
+#### Case A: Existing VM (already set up with SSH)
+
+If a VM already exists, test if SSH works:
+```bash
+ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no lume@VM_IP 'echo SSH OK' 2>/dev/null
+```
+
+If SSH succeeds → the VM is set up. **Skip to step 3d.** NanoClaw's `ensureLumeVmRunning()` will manage starting/stopping the VM automatically via detached `lume run` when the service starts.
+
+If the VM exists but SSH fails (VM stopped or SSH not configured), try starting it first:
+```bash
+lume run VM_NAME --shared-dir PROJECT_ROOT --no-display &
+sleep 30
+ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no lume@VM_IP 'echo SSH OK'
+```
+If SSH works now → skip to step 3d. If still failing → the VM needs manual macOS setup; follow Case B.
+
+#### Case B: Fresh VM (needs one-time manual setup)
 
 If no VM exists, create one:
 ```bash
@@ -121,21 +147,22 @@ lume create default --os macos
 
 This downloads a macOS restore image and creates the VM. It takes a while (several GB download).
 
-Start the VM (display is on by default):
-```bash
-lume run VM_NAME --shared-dir PROJECT_ROOT
-```
+**Do NOT start `lume run` as a Claude Code subprocess** (no `run_in_background`). The process would be killed when the Claude Code session ends, stopping the VM. For the initial setup, the user must run it in a separate terminal because they need to interact with the VM's display window:
 
-**Important:** Lume CLI uses positional arguments, NOT `--name`:
-- Correct: `lume run my-vm`, `lume get my-vm`
-- Wrong: `lume run --name my-vm`, `lume get --name my-vm`
-- Display is on by default. There is no `--display` flag, only `--no-display`.
+> Open a **separate terminal window** and run:
+> ```
+> lume run VM_NAME --shared-dir PROJECT_ROOT
+> ```
+> This opens a VM window where you'll complete the one-time macOS setup.
+> After setup is done, you can close this terminal — NanoClaw will manage the VM automatically from then on.
 
-Run this with `run_in_background: true`. The VM will take 1-2 minutes to boot.
+Wait for the user to confirm the VM window appeared before proceeding. The VM will take 1-2 minutes to boot.
 
-### 3c. Manual macOS Setup (IMPORTANT — requires user action)
+### 3c. Manual macOS Setup (Fresh VM only — requires user action)
 
-**The VM requires manual setup through its display window.** This is NOT automatic. Tell the user:
+**Only needed for fresh VMs. Skip if the VM already has SSH access (Case A above).**
+
+The VM requires manual setup through its display window. This is NOT automatic. Tell the user:
 
 > A macOS VM window should have appeared on your screen. You need to complete the initial setup manually:
 >
