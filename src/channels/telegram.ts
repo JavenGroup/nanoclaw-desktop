@@ -5,6 +5,7 @@ import { Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
+import { transcribeAudio } from '../transcription.js';
 import {
   Channel,
   OnInboundMessage,
@@ -258,8 +259,74 @@ export class TelegramChannel implements Channel {
       });
     });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
-    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
+
+    // Voice & audio — download and transcribe via Whisper
+    const handleAudioMessage = async (
+      ctx: any,
+      fileId: string,
+      label: string,
+      fallback: string,
+    ) => {
+      const threadId = ctx.message?.is_topic_message ? ctx.message?.message_thread_id : undefined;
+      const chatJid = buildTopicJid(ctx.chat.id, threadId);
+      const groups = this.opts.registeredGroups();
+      if (!groups[chatJid] && !groups[stripTopicSuffix(chatJid)]) {
+        logger.warn({ chatJid }, `${label} from unregistered Telegram chat`);
+        return;
+      }
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const msgId = ctx.message.message_id.toString();
+
+      let placeholder = fallback;
+      try {
+        const file = await ctx.api.getFile(fileId);
+        if (file.file_path) {
+          const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+          const resp = await fetch(url);
+          if (resp.ok) {
+            const buffer = Buffer.from(await resp.arrayBuffer());
+            const text = await transcribeAudio(buffer, file.file_path);
+            if (text) {
+              placeholder = `[${label}: ${text}]`;
+              logger.info({ chatJid, length: text.length }, `${label} transcribed`);
+            }
+          } else {
+            logger.warn({ chatJid, status: resp.status }, `Failed to download ${label.toLowerCase()}`);
+          }
+        }
+      } catch (err) {
+        logger.error({ chatJid, err }, `Error processing ${label.toLowerCase()}`);
+      }
+
+      this.opts.onChatMetadata(chatJid, timestamp);
+      const base = stripTopicSuffix(chatJid);
+      if (base !== chatJid) {
+        this.opts.onChatMetadata(base, timestamp);
+      }
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content: `${placeholder}${caption}`,
+        timestamp,
+        is_from_me: false,
+      });
+    };
+
+    this.bot.on('message:voice', (ctx) =>
+      handleAudioMessage(ctx, ctx.message.voice.file_id, 'Voice', '[Voice message]'),
+    );
+    this.bot.on('message:audio', (ctx) =>
+      handleAudioMessage(ctx, ctx.message.audio.file_id, 'Audio', '[Audio]'),
+    );
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
       storeNonText(ctx, `[Document: ${name}]`);
