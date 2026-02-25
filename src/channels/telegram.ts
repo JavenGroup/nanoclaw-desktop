@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
+
 import { Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -186,7 +189,74 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const threadId = ctx.message?.is_topic_message ? ctx.message?.message_thread_id : undefined;
+      const chatJid = buildTopicJid(ctx.chat.id, threadId);
+      const groups = this.opts.registeredGroups();
+      const group = groups[chatJid] || groups[stripTopicSuffix(chatJid)];
+      if (!group) {
+        logger.warn({ chatJid }, 'Photo from unregistered Telegram chat');
+        return;
+      }
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const msgId = ctx.message.message_id.toString();
+
+      // Get largest photo resolution (last element in the array)
+      const photos = ctx.message.photo;
+      const largest = photos[photos.length - 1];
+      let imagePaths: string[] | undefined;
+
+      try {
+        const file = await ctx.api.getFile(largest.file_id);
+        if (file.file_path) {
+          const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+          const resp = await fetch(url);
+          if (resp.ok) {
+            const safeChatJid = chatJid.replace(/[^a-zA-Z0-9-]/g, '_');
+            const photoDir = path.join(DATA_DIR, 'photos', safeChatJid);
+            fs.mkdirSync(photoDir, { recursive: true });
+            const ext = path.extname(file.file_path) || '.jpg';
+            const localFile = path.join(photoDir, `${msgId}${ext}`);
+            const buffer = Buffer.from(await resp.arrayBuffer());
+            fs.writeFileSync(localFile, buffer);
+
+            // Relative path from project root for ContainerInput
+            const relativePath = path.relative(process.cwd(), localFile);
+            imagePaths = [relativePath];
+            logger.info({ chatJid, localFile, size: buffer.length }, 'Telegram photo downloaded');
+          } else {
+            logger.warn({ chatJid, status: resp.status }, 'Failed to download Telegram photo');
+          }
+        }
+      } catch (err) {
+        logger.error({ chatJid, err }, 'Error downloading Telegram photo');
+      }
+
+      const photoRef = imagePaths ? `[Photo: ${imagePaths[0]}]` : '[Photo]';
+
+      this.opts.onChatMetadata(chatJid, timestamp);
+      const base = stripTopicSuffix(chatJid);
+      if (base !== chatJid) {
+        this.opts.onChatMetadata(base, timestamp);
+      }
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content: `${photoRef}${caption}`,
+        timestamp,
+        is_from_me: false,
+        imagePaths,
+      });
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));

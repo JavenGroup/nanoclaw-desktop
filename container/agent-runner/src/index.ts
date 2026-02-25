@@ -26,6 +26,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  images?: Array<{ relativePath: string; mediaType: string }>;
 }
 
 interface ContainerOutput {
@@ -46,9 +47,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -67,10 +72,10 @@ class MessageStream {
   private waiting: (() => void) | null = null;
   private done = false;
 
-  push(text: string): void {
+  push(content: string | ContentBlock[]): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -330,7 +335,7 @@ function waitForIpcMessage(): Promise<string | null> {
  * Also pipes IPC messages into the stream during the query.
  */
 async function runQuery(
-  prompt: string,
+  prompt: string | ContentBlock[],
   sessionId: string | undefined,
   mcpServerPath: string,
   containerInput: ContainerInput,
@@ -471,14 +476,50 @@ async function main(): Promise<void> {
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
-  let prompt = containerInput.prompt;
+  let promptText = containerInput.prompt;
   if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+    promptText = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${promptText}`;
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.join('\n');
+    promptText += '\n' + pending.join('\n');
+  }
+
+  // Build multimodal content if images are attached
+  let initialPrompt: string | ContentBlock[] = promptText;
+  if (containerInput.images && containerInput.images.length > 0) {
+    const blocks: ContentBlock[] = [];
+    // Resolve image paths: try VM shared dir first, then container mount
+    const basePaths = ['/Volumes/My Shared Files', '/workspace/project'];
+    for (const img of containerInput.images) {
+      let imageData: string | null = null;
+      for (const base of basePaths) {
+        const fullPath = path.join(base, img.relativePath);
+        if (fs.existsSync(fullPath)) {
+          try {
+            imageData = fs.readFileSync(fullPath).toString('base64');
+            log(`Loaded image: ${fullPath} (${imageData.length} base64 chars)`);
+          } catch (err) {
+            log(`Failed to read image ${fullPath}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          break;
+        }
+      }
+      if (imageData) {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: img.mediaType, data: imageData },
+        });
+      } else {
+        log(`Image not found: ${img.relativePath} (tried: ${basePaths.join(', ')})`);
+      }
+    }
+    if (blocks.length > 0) {
+      blocks.push({ type: 'text', text: promptText });
+      initialPrompt = blocks;
+      log(`Built multimodal prompt with ${blocks.length - 1} image(s)`);
+    }
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
@@ -487,7 +528,7 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, resumeAt);
+      const queryResult = await runQuery(initialPrompt, sessionId, mcpServerPath, containerInput, resumeAt);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -516,7 +557,7 @@ async function main(): Promise<void> {
       }
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+      initialPrompt = nextMessage;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

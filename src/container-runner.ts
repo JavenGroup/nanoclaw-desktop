@@ -40,6 +40,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  images?: Array<{ relativePath: string; mediaType: string }>;
 }
 
 export interface ContainerOutput {

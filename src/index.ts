@@ -149,6 +149,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages);
 
+  // Extract image paths from photo messages (stored as [Photo: relative/path])
+  const imagePathRegex = /\[Photo: ([^\]]+)\]/g;
+  const images: Array<{ relativePath: string; mediaType: string }> = [];
+  for (const msg of missedMessages) {
+    let match;
+    while ((match = imagePathRegex.exec(msg.content)) !== null) {
+      const relativePath = match[1];
+      const ext = relativePath.split('.').pop()?.toLowerCase() || 'jpg';
+      const mediaType = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+      images.push({ relativePath, mediaType });
+    }
+  }
+
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
@@ -177,7 +190,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, prompt, chatJid, images.length > 0 ? images : undefined, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
@@ -222,6 +235,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  images?: Array<{ relativePath: string; mediaType: string }>,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const effectiveFolder = getEffectiveFolder(group.folder, chatJid);
@@ -274,6 +288,7 @@ async function runAgent(
         groupFolder: effectiveFolder,
         chatJid,
         isMain,
+        images,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, effectiveFolder),
       wrappedOnOutput,

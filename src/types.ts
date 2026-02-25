@@ -50,6 +50,7 @@ export interface NewMessage {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
+  imagePaths?: string[]; // Host-relative paths to downloaded images
 }
 
 export interface ScheduledTask {
