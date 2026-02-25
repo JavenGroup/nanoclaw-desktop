@@ -263,7 +263,7 @@ function buildSshCommand(
     `ln -sf "${shared}/data/ipc/${effectiveFolder}" "${ws}/ipc"`,
     `ln -sf "${shared}/groups/global" "${ws}/global"`,
     `ln -sf "${shared}/data/sessions/${effectiveFolder}" "${ws}/sessions"`,
-    `ln -sf "${shared}/container/agent-runner" "${ws}/agent-runner"`,
+    `ln -sf "/Users/${LUME_VM_USER}/local/agent-runner" "${ws}/agent-runner"`,
     // Symlink .claude into the group dir so Claude Code SDK finds settings/skills
     // via the 'project' settings source (cwd = {ws}/group/).
     // This avoids racing on ~/.claude which is shared across all containers.
