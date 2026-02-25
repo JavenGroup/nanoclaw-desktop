@@ -9,11 +9,21 @@
  *
  * Usage:
  *   patchright-browser open <url>           Open URL in headed Chromium
+ *   patchright-browser snapshot [-i]        Snapshot page elements (use -i for interactive only)
  *   patchright-browser screenshot [url]     Take screenshot (optionally navigate first)
  *   patchright-browser html [url]           Print page HTML
  *   patchright-browser text [url]           Print visible text
- *   patchright-browser click <selector>     Click element (requires open page)
- *   patchright-browser type <selector> <text>  Type into element
+ *   patchright-browser click <@ref|sel>     Click element by ref or CSS selector
+ *   patchright-browser fill <@ref|sel> <text>  Clear and type into element
+ *   patchright-browser type <@ref|sel> <text>  Type into element (append)
+ *   patchright-browser select <@ref|sel> <val> Select dropdown option
+ *   patchright-browser hover <@ref|sel>     Hover over element
+ *   patchright-browser press <key>          Press keyboard key (Enter, Escape, Tab, etc.)
+ *   patchright-browser scroll <dir> [px]    Scroll page (up/down/left/right)
+ *   patchright-browser back                 Navigate back
+ *   patchright-browser forward              Navigate forward
+ *   patchright-browser reload               Reload page
+ *   patchright-browser wait <ms|@ref|--text ".."|--url "..">  Wait for condition
  *   patchright-browser eval <js>            Evaluate JavaScript on current page
  *   patchright-browser close                Close browser
  *   patchright-browser status               Show browser status
@@ -183,6 +193,36 @@ function clearState() {
   try { fs.unlinkSync(STATE_FILE); } catch {}
 }
 
+// --- Ref management ---
+// Refs persist between invocations so snapshot → click @e1 works across calls.
+
+const REF_FILE = path.join(PROFILE_DIR, '.refs.json');
+
+function saveRefs(refs) {
+  fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  fs.writeFileSync(REF_FILE, JSON.stringify(refs));
+}
+
+function loadRefs() {
+  try {
+    if (fs.existsSync(REF_FILE)) {
+      return JSON.parse(fs.readFileSync(REF_FILE, 'utf-8'));
+    }
+  } catch {}
+  return {};
+}
+
+/** Resolve @eN ref to CSS selector, or return as-is if not a ref */
+function resolveSelector(selectorOrRef) {
+  if (/^@e\d+$/.test(selectorOrRef)) {
+    const refs = loadRefs();
+    const sel = refs[selectorOrRef];
+    if (!sel) throw new Error(`Unknown ref ${selectorOrRef}. Run 'snapshot -i' first.`);
+    return sel;
+  }
+  return selectorOrRef;
+}
+
 // --- CDP helpers ---
 
 /** Check if Chrome's CDP endpoint is reachable */
@@ -322,17 +362,152 @@ try {
       const title = await page.title();
       console.log(`Opened: ${url}`);
       console.log(`Title: ${title}`);
-      console.log(`Profile: ${PROFILE_DIR}`);
+      console.log(`Tip: Run 'patchright-browser snapshot -i' to see interactive elements`);
+      break;
+    }
+
+    case 'snapshot': {
+      const interactiveOnly = args.includes('-i');
+      const { page } = await ensureBrowser();
+
+      const results = await page.evaluate(([interactive]) => {
+        // --- inline snapshot logic (runs in browser) ---
+        // Remove old refs
+        document.querySelectorAll('[data-pb-ref]').forEach(el => el.removeAttribute('data-pb-ref'));
+
+        const INTERACTIVE_SEL = 'a[href], button, input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [role="switch"], [role="combobox"], [role="option"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
+
+        function isVisible(el) {
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+          // offsetParent is null for position:fixed/sticky elements, which are visible
+          if (!el.offsetParent && style.position !== 'fixed' && style.position !== 'sticky'
+              && el.tagName !== 'BODY' && el.tagName !== 'HTML') return false;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) return false;
+          return true;
+        }
+
+        function getLabel(el) {
+          if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+          const labelledBy = el.getAttribute('aria-labelledby');
+          if (labelledBy) {
+            const labelEl = document.getElementById(labelledBy);
+            if (labelEl) return labelEl.textContent.trim();
+          }
+          if (el.id) {
+            const label = document.querySelector('label[for="' + el.id + '"]');
+            if (label) return label.textContent.trim();
+          }
+          if (el.placeholder) return el.placeholder;
+          if (el.title) return el.title;
+          const text = el.textContent?.trim();
+          return text && text.length <= 80 ? text : (text ? text.slice(0, 77) + '...' : '');
+        }
+
+        function getRole(el) {
+          if (el.getAttribute('role')) return el.getAttribute('role');
+          const tag = el.tagName.toLowerCase();
+          if (tag === 'a') return 'link';
+          if (tag === 'button') return 'button';
+          if (tag === 'input') {
+            const type = (el.type || 'text').toLowerCase();
+            if (type === 'checkbox') return 'checkbox';
+            if (type === 'radio') return 'radio';
+            if (type === 'submit' || type === 'button') return 'button';
+            return 'textbox';
+          }
+          if (tag === 'textarea') return 'textbox';
+          if (tag === 'select') return 'combobox';
+          if (tag === 'img') return 'img';
+          return tag;
+        }
+
+        function buildSelector(el) {
+          if (el.id) return '#' + CSS.escape(el.id);
+          const tag = el.tagName.toLowerCase();
+          const attrs = [];
+          for (const attr of ['name', 'type', 'data-testid', 'data-id', 'aria-label']) {
+            if (el.getAttribute(attr)) {
+              const sel = tag + '[' + attr + '=' + JSON.stringify(el.getAttribute(attr)) + ']';
+              if (document.querySelectorAll(sel).length === 1) return sel;
+              attrs.push([attr, el.getAttribute(attr)]);
+            }
+          }
+          if (attrs.length >= 2) {
+            const sel = tag + attrs.map(([k, v]) => '[' + k + '=' + JSON.stringify(v) + ']').join('');
+            if (document.querySelectorAll(sel).length === 1) return sel;
+          }
+          // Fallback: use data-pb-ref attribute (we set it below)
+          return '[data-pb-ref="' + el._pbRefTemp + '"]';
+        }
+
+        const candidates = interactive
+          ? Array.from(document.querySelectorAll(INTERACTIVE_SEL))
+          : Array.from(document.querySelectorAll('*'));
+        const elements = candidates.filter(isVisible);
+        const results = [];
+        let refIndex = 1;
+
+        for (const el of elements) {
+          const role = getRole(el);
+          const label = getLabel(el);
+          if (!interactive && !label && role !== 'img') continue;
+
+          const ref = 'e' + refIndex++;
+          el._pbRefTemp = ref;
+          el.setAttribute('data-pb-ref', ref);
+
+          const entry = { ref: '@' + ref, role, name: label, _selector: buildSelector(el) };
+          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+            if (el.value) entry.value = el.value.slice(0, 100);
+            if (el.type && el.type !== 'text') entry.type = el.type;
+          }
+          if (el.tagName === 'A' && el.href) entry.href = el.href;
+          if (el.checked !== undefined) entry.checked = el.checked;
+          if (el.disabled) entry.disabled = true;
+
+          delete el._pbRefTemp;
+          results.push(entry);
+        }
+        return results;
+      }, [interactiveOnly]);
+
+      // Save ref → selector mapping (el.ref is already "@eN")
+      const refMap = {};
+      for (const el of results) {
+        refMap[el.ref] = el._selector;
+      }
+      saveRefs(refMap);
+
+      // Print results (without internal _selector)
+      const title = await page.title();
+      const url = page.url();
+      console.log(`Page: ${title}`);
+      console.log(`URL: ${url}`);
+      console.log(`Elements: ${results.length}${interactiveOnly ? ' (interactive)' : ''}`);
+      console.log('---');
+      for (const el of results) {
+        const parts = [el.ref, el.role];
+        if (el.name) parts.push(`"${el.name}"`);
+        if (el.type) parts.push(`[${el.type}]`);
+        if (el.value) parts.push(`value="${el.value}"`);
+        if (el.checked !== undefined) parts.push(el.checked ? '[checked]' : '[unchecked]');
+        if (el.disabled) parts.push('[disabled]');
+        if (el.href) parts.push(`→ ${el.href}`);
+        console.log(parts.join('  '));
+      }
       break;
     }
 
     case 'screenshot': {
-      const url = args[0];
+      const fullPage = args.includes('--full');
+      const url = args.find(a => a !== '--full');
       const { page } = await ensureBrowser(url);
       if (url) await page.waitForTimeout(2000);
       fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
       const filePath = path.join(SCREENSHOT_DIR, `screenshot-${Date.now()}.png`);
-      await page.screenshot({ path: filePath, fullPage: false });
+      await page.screenshot({ path: filePath, fullPage });
       console.log(`Screenshot saved: ${filePath}`);
       break;
     }
@@ -352,21 +527,118 @@ try {
     }
 
     case 'click': {
-      const selector = args[0];
-      if (!selector) { console.error('Usage: patchright-browser click <selector>'); process.exit(1); }
+      const target = args[0];
+      if (!target) { console.error('Usage: patchright-browser click <@ref|selector>'); process.exit(1); }
       const { page } = await ensureBrowser();
+      const selector = resolveSelector(target);
       await page.click(selector, { timeout: 10000 });
-      console.log(`Clicked: ${selector}`);
+      console.log(`Clicked: ${target}`);
+      break;
+    }
+
+    case 'fill': {
+      const target = args[0];
+      const text = args.slice(1).join(' ');
+      if (!target) { console.error('Usage: patchright-browser fill <@ref|selector> <text>'); process.exit(1); }
+      const { page } = await ensureBrowser();
+      const selector = resolveSelector(target);
+      await page.fill(selector, text, { timeout: 10000 });
+      console.log(`Filled ${target}: ${text}`);
       break;
     }
 
     case 'type': {
-      const selector = args[0];
+      const target = args[0];
       const text = args.slice(1).join(' ');
-      if (!selector || !text) { console.error('Usage: patchright-browser type <selector> <text>'); process.exit(1); }
+      if (!target || !text) { console.error('Usage: patchright-browser type <@ref|selector> <text>'); process.exit(1); }
       const { page } = await ensureBrowser();
-      await page.fill(selector, text, { timeout: 10000 });
-      console.log(`Typed into ${selector}: ${text}`);
+      const selector = resolveSelector(target);
+      await page.type(selector, text);
+      console.log(`Typed into ${target}: ${text}`);
+      break;
+    }
+
+    case 'select': {
+      const target = args[0];
+      const value = args[1];
+      if (!target || !value) { console.error('Usage: patchright-browser select <@ref|selector> <value>'); process.exit(1); }
+      const { page } = await ensureBrowser();
+      const selector = resolveSelector(target);
+      await page.selectOption(selector, value, { timeout: 10000 });
+      console.log(`Selected ${target}: ${value}`);
+      break;
+    }
+
+    case 'hover': {
+      const target = args[0];
+      if (!target) { console.error('Usage: patchright-browser hover <@ref|selector>'); process.exit(1); }
+      const { page } = await ensureBrowser();
+      const selector = resolveSelector(target);
+      await page.hover(selector, { timeout: 10000 });
+      console.log(`Hovered: ${target}`);
+      break;
+    }
+
+    case 'press': {
+      const key = args[0];
+      if (!key) { console.error('Usage: patchright-browser press <key>'); process.exit(1); }
+      const { page } = await ensureBrowser();
+      await page.keyboard.press(key);
+      console.log(`Pressed: ${key}`);
+      break;
+    }
+
+    case 'scroll': {
+      const dir = args[0] || 'down';
+      const px = parseInt(args[1]) || 500;
+      const { page } = await ensureBrowser();
+      const deltaX = dir === 'left' ? -px : dir === 'right' ? px : 0;
+      const deltaY = dir === 'up' ? -px : dir === 'down' ? px : 0;
+      await page.mouse.wheel(deltaX, deltaY);
+      console.log(`Scrolled ${dir} ${px}px`);
+      break;
+    }
+
+    case 'back': {
+      const { page } = await ensureBrowser();
+      await page.goBack({ timeout: 15000 });
+      console.log(`Navigated back: ${page.url()}`);
+      break;
+    }
+
+    case 'forward': {
+      const { page } = await ensureBrowser();
+      await page.goForward({ timeout: 15000 });
+      console.log(`Navigated forward: ${page.url()}`);
+      break;
+    }
+
+    case 'reload': {
+      const { page } = await ensureBrowser();
+      await page.reload({ timeout: 30000 });
+      console.log(`Reloaded: ${page.url()}`);
+      break;
+    }
+
+    case 'wait': {
+      const { page } = await ensureBrowser();
+      if (args[0] === '--text') {
+        const text = args.slice(1).join(' ');
+        await page.waitForFunction((t) => document.body.innerText.includes(t), text, { timeout: 15000 });
+        console.log(`Text found: "${text}"`);
+      } else if (args[0] === '--url') {
+        const pattern = args[1];
+        await page.waitForURL(pattern, { timeout: 15000 });
+        console.log(`URL matched: ${page.url()}`);
+      } else if (/^@e\d+$/.test(args[0])) {
+        const selector = resolveSelector(args[0]);
+        await page.waitForSelector(selector, { timeout: 15000 });
+        console.log(`Element found: ${args[0]}`);
+      } else {
+        const ms = parseInt(args[0]) || 1000;
+        await page.waitForTimeout(ms);
+        console.log(`Waited ${ms}ms`);
+      }
       break;
     }
 
@@ -416,7 +688,7 @@ try {
 
     default:
       console.error(`Unknown command: ${command}`);
-      console.error('Commands: open, screenshot, html, text, click, type, eval, close, status');
+      console.error('Commands: open, snapshot, screenshot, html, text, click, fill, type, select, hover, press, scroll, back, forward, reload, wait, eval, close, status');
       process.exit(1);
   }
   // Disconnect from CDP WebSocket so Node can exit
