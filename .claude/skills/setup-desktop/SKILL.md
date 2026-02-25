@@ -49,7 +49,9 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 
 18. **NEVER start `lume run` as a Claude Code subprocess**: `lume run` is a blocking foreground process — the VM lives only as long as it does. If started via Bash tool (even with `run_in_background`), it becomes a child of Claude Code and gets killed when the session ends, stopping the VM. For **existing VMs**, don't start `lume run` at all — NanoClaw's `ensureLumeVmRunning()` manages it automatically via detached spawn. For **fresh VMs** needing one-time manual macOS setup, the user must run `lume run` in a separate terminal (they need the display window to create the user account and enable SSH).
 
-19. **Enabling Forum Topics changes the chat ID**: When Forum Topics are enabled on a Telegram group, Telegram converts it to a supergroup with a **completely new chat ID** (e.g. `-5275811457` → `-1003766556846`). The old registered JID becomes stale and all messages are silently dropped. NanoClaw auto-migrates if it sees the `migrate_to_chat_id` event, but if topics were enabled while the bot was offline, you must manually update: `sqlite3 store/messages.db "UPDATE registered_groups SET jid = 'tg:NEW_ID' WHERE jid = 'tg:OLD_ID';"`. Use `/chatid` in the group to get the new ID.
+19. **VM must have Automatic Login enabled**: The patchright anti-detection browser runs in headed mode and requires an active GUI session (WindowServer). Without auto-login, the VM boots to a lock screen and Chromium cannot render. Configure in the VM: System Settings → Users & Groups → Automatic Login → select `lume`.
+
+20. **Enabling Forum Topics changes the chat ID**: When Forum Topics are enabled on a Telegram group, Telegram converts it to a supergroup with a **completely new chat ID** (e.g. `-5275811457` → `-1003766556846`). The old registered JID becomes stale and all messages are silently dropped. NanoClaw auto-migrates if it sees the `migrate_to_chat_id` event, but if topics were enabled while the bot was offline, you must manually update: `sqlite3 store/messages.db "UPDATE registered_groups SET jid = 'tg:NEW_ID' WHERE jid = 'tg:OLD_ID';"`. Use `/chatid` in the group to get the new ID.
 
 ---
 
@@ -173,8 +175,10 @@ The VM requires manual setup through its display window. This is NOT automatic. 
 >    - (These match what NanoClaw expects for SSH access)
 > 3. **After reaching the desktop**, go to **System Settings → General → Sharing**
 > 4. **Enable "Remote Login"** (this enables SSH so NanoClaw can connect to the VM)
+> 5. **Enable Automatic Login**: go to **System Settings → Users & Groups → Automatic Login** → select **lume**
+>    - (This ensures the patchright anti-detection browser works after VM reboots — it requires an active GUI session)
 >
-> Let me know when you've completed all 4 steps.
+> Let me know when you've completed all 5 steps.
 
 **Wait for user confirmation before proceeding.** Do not attempt SSH until the user confirms.
 
