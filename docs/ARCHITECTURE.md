@@ -113,7 +113,8 @@ Notation: {ef} = effectiveFolder (e.g. "andy-workspace~t16")
 
 ### VirtioFS Caveats
 
-- **Caching:** VirtioFS caches aggressively. After rebuilding files on the host, the VM may still read stale content. **Code paths** (agent-runner, tools) are deployed via SCP to `~/local/` on the VM to bypass this — see `container/agent-runner/deploy.sh` and `container/tools/deploy.sh`. **Data paths** (groups, IPC, sessions) work fine over VirtioFS since they're written fresh at runtime.
+- **Caching:** VirtioFS caches aggressively. After modifying files on the host, the VM may still read stale content. **Code paths** (agent-runner, tools) are deployed via SCP to `~/local/` on the VM to bypass this — see `container/agent-runner/deploy.sh` and `container/tools/deploy.sh`. **Runtime-generated data** (IPC, sessions) works fine since files are written fresh. **Persistent data files** (e.g. `CLAUDE.md`) are also affected — the only reliable fix is a VM restart (clears the VirtioFS page cache).
+- **VM restart procedure:** Always restart via the nanoclaw service, never manually. Manual `lume run` will miss `--shared-dir` (VirtioFS won't mount) and patchright-browser requires a display (no `--no-display`). Correct procedure: `lume stop my-vm` → restart the nanoclaw service.
 - **Symlink into symlink:** `ln -sf target existing-symlink-to-dir` creates the link *inside* the directory instead of replacing it. Always `rm -rf` before `ln -sf`.
 
 ## Topic Isolation Model
@@ -331,7 +332,9 @@ groups/{ef}/CLAUDE.md            ← Loaded as project CLAUDE.md (cwd = groups/{
 
 ### Persona Templates
 
-`groups/*/CLAUDE.md.default` are git-tracked templates with "Andy" as the default name. On startup, `generateClaudeMdFiles()` in `index.ts` generates the actual `CLAUDE.md` by replacing "Andy" with `ASSISTANT_NAME` from `.env`. The generated files are gitignored.
+`groups/*/CLAUDE.md.default` are git-tracked templates with "Andy" as the default name. On startup, `generateClaudeMdFiles()` in `index.ts` generates the actual `CLAUDE.md` **only if it doesn't already exist**, replacing "Andy" with `ASSISTANT_NAME` from `.env`. The generated files are gitignored.
+
+**When `.default` is updated** (e.g. after `git pull`): the existing `CLAUDE.md` is NOT automatically regenerated — it's treated as an independent instance that may have local customizations. Manually review the diff and merge changes into the deployed `CLAUDE.md`. After updating, a VM restart is required for the agent to see the new content (VirtioFS caching).
 
 ## Concurrency Model
 
