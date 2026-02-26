@@ -283,7 +283,7 @@ function getAuthEnvVars(): string {
   if (!fs.existsSync(envFile)) return '';
 
   const content = fs.readFileSync(envFile, 'utf-8');
-  const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+  const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'GITHUB_TOKEN'];
   const exports: string[] = [];
 
   for (const line of content.split('\n')) {
