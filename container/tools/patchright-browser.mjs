@@ -201,10 +201,8 @@ function clearState() {
 async function saveCookies(context) {
   try {
     const cookies = await context.cookies();
-    if (cookies.length > 0) {
-      fs.mkdirSync(PROFILE_DIR, { recursive: true });
-      fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies));
-    }
+    fs.mkdirSync(PROFILE_DIR, { recursive: true });
+    fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies));
   } catch {}
 }
 
@@ -405,7 +403,6 @@ try {
       const url = args[0];
       if (!url) { console.error('Usage: patchright-browser open <url>'); process.exit(1); }
       const { page } = await ensureBrowser(url);
-      // saveCookies is called inside ensureBrowser after goto
       const title = await page.title();
       console.log(`Opened: ${url}`);
       console.log(`Title: ${title}`);
@@ -589,10 +586,11 @@ try {
       const target = args[0];
       const text = args.slice(1).join(' ');
       if (!target) { console.error('Usage: patchright-browser fill <@ref|selector> <text>'); process.exit(1); }
-      const { page } = await ensureBrowser();
+      const { page, context } = await ensureBrowser();
       const selector = resolveSelector(target);
       await page.fill(selector, text, { timeout: 10000 });
       console.log(`Filled ${target}: ${text}`);
+      await saveCookies(context);
       break;
     }
 
@@ -600,10 +598,11 @@ try {
       const target = args[0];
       const text = args.slice(1).join(' ');
       if (!target || !text) { console.error('Usage: patchright-browser type <@ref|selector> <text>'); process.exit(1); }
-      const { page } = await ensureBrowser();
+      const { page, context } = await ensureBrowser();
       const selector = resolveSelector(target);
       await page.type(selector, text);
       console.log(`Typed into ${target}: ${text}`);
+      await saveCookies(context);
       break;
     }
 
@@ -631,9 +630,10 @@ try {
     case 'press': {
       const key = args[0];
       if (!key) { console.error('Usage: patchright-browser press <key>'); process.exit(1); }
-      const { page } = await ensureBrowser();
+      const { page, context } = await ensureBrowser();
       await page.keyboard.press(key);
       console.log(`Pressed: ${key}`);
+      await saveCookies(context);
       break;
     }
 
