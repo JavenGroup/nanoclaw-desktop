@@ -39,6 +39,7 @@ import http from 'http';
 const WORKSPACE_BASE = process.env.WORKSPACE_BASE || '/tmp';
 const PROFILE_DIR = path.join(WORKSPACE_BASE, 'group', '.browser-data');
 const STATE_FILE = path.join(PROFILE_DIR, '.state.json');
+const COOKIES_FILE = path.join(PROFILE_DIR, '.cookies.json');
 const SCREENSHOT_DIR = path.join(WORKSPACE_BASE, 'group');
 const BROWSER_LANG = process.env.BROWSER_LANG || 'zh-TW';
 const BROWSER_TIMEZONE = process.env.BROWSER_TIMEZONE || 'Asia/Taipei';
@@ -193,6 +194,31 @@ function clearState() {
   try { fs.unlinkSync(STATE_FILE); } catch {}
 }
 
+// --- Cookie persistence (survives VM restarts) ---
+// Session cookies are only in Chrome's memory; SIGKILL loses them.
+// We export via Playwright API after each navigation and restore on new browser launch.
+
+async function saveCookies(context) {
+  try {
+    const cookies = await context.cookies();
+    if (cookies.length > 0) {
+      fs.mkdirSync(PROFILE_DIR, { recursive: true });
+      fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies));
+    }
+  } catch {}
+}
+
+async function restoreCookies(context) {
+  try {
+    if (fs.existsSync(COOKIES_FILE)) {
+      const cookies = JSON.parse(fs.readFileSync(COOKIES_FILE, 'utf-8'));
+      if (cookies.length > 0) {
+        await context.addCookies(cookies);
+      }
+    }
+  } catch {}
+}
+
 // --- Ref management ---
 // Refs persist between invocations so snapshot → click @e1 works across calls.
 
@@ -289,18 +315,31 @@ function spawnChromium(debugPort) {
 /** Connect to existing browser or launch a new one */
 async function ensureBrowser(url) {
   let port;
+  let isNewBrowser = false;
   const state = loadState();
 
   // Try reconnecting to existing browser
   if (state?.port && await isCdpAlive(state.port)) {
     port = state.port;
   } else {
-    // Launch a new detached Chromium process
+    // Kill orphaned Chrome process if we have a stale PID (e.g. after VM restart)
+    if (state?.pid) {
+      try { process.kill(state.pid, 'SIGTERM'); } catch {}
+    }
     clearState();
     port = await findFreePort();
     const child = spawnChromium(port);
-    await waitForCdpReady(port);
+    // Save state BEFORE waiting — so the next call can kill this Chrome if we time out
     saveState(port, child.pid);
+    try {
+      await waitForCdpReady(port, 30000);
+    } catch (err) {
+      // Chrome failed to start — kill it, clear state, propagate
+      try { process.kill(child.pid, 'SIGKILL'); } catch {}
+      clearState();
+      throw err;
+    }
+    isNewBrowser = true;
   }
 
   // connectOverCDP auto-discovers wsUrl from http endpoint
@@ -342,8 +381,15 @@ async function ensureBrowser(url) {
   // Also apply to future pages opened in this context
   context.on('page', applyHttpUA);
 
+  // Restore saved cookies when launching a fresh Chrome (e.g. after VM restart)
+  if (isNewBrowser) {
+    await restoreCookies(context);
+  }
+
   if (url) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Save cookies after navigation — captures any auth cookies set by the page
+    await saveCookies(context);
   }
 
   return { browser, context, page };
@@ -359,6 +405,7 @@ try {
       const url = args[0];
       if (!url) { console.error('Usage: patchright-browser open <url>'); process.exit(1); }
       const { page } = await ensureBrowser(url);
+      // saveCookies is called inside ensureBrowser after goto
       const title = await page.title();
       console.log(`Opened: ${url}`);
       console.log(`Title: ${title}`);
@@ -529,10 +576,12 @@ try {
     case 'click': {
       const target = args[0];
       if (!target) { console.error('Usage: patchright-browser click <@ref|selector>'); process.exit(1); }
-      const { page } = await ensureBrowser();
+      const { page, context } = await ensureBrowser();
       const selector = resolveSelector(target);
       await page.click(selector, { timeout: 10000 });
       console.log(`Clicked: ${target}`);
+      // Save cookies — click may have triggered login/auth state change
+      await saveCookies(context);
       break;
     }
 
