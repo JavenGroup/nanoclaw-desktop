@@ -386,7 +386,7 @@ export class TelegramChannel implements Channel {
 
     try {
       const { chatId, threadId } = parseTopicJid(jid);
-      const opts = threadId !== undefined ? { message_thread_id: threadId } : {};
+      const opts: Record<string, unknown> = { parse_mode: 'Markdown', ...(threadId !== undefined ? { message_thread_id: threadId } : {}) };
       const MAX_LENGTH = 4096;
       const sendChunk = async (chunk: string, sendOpts: Record<string, unknown>) => {
         try {
