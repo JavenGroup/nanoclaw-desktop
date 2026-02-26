@@ -198,11 +198,16 @@ function clearState() {
 // Session cookies are only in Chrome's memory; SIGKILL loses them.
 // We export via Playwright API after each navigation and restore on new browser launch.
 
-async function saveCookies(context) {
+async function saveCookiesIfChanged(context) {
   try {
     const cookies = await context.cookies();
-    fs.mkdirSync(PROFILE_DIR, { recursive: true });
-    fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies));
+    const newJson = JSON.stringify(cookies);
+    let oldJson = '';
+    try { oldJson = fs.readFileSync(COOKIES_FILE, 'utf-8'); } catch {}
+    if (newJson !== oldJson) {
+      fs.mkdirSync(PROFILE_DIR, { recursive: true });
+      fs.writeFileSync(COOKIES_FILE, newJson);
+    }
   } catch {}
 }
 
@@ -387,7 +392,7 @@ async function ensureBrowser(url) {
   if (url) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     // Save cookies after navigation — captures any auth cookies set by the page
-    await saveCookies(context);
+    await saveCookiesIfChanged(context);
   }
 
   return { browser, context, page };
@@ -578,7 +583,7 @@ try {
       await page.click(selector, { timeout: 10000 });
       console.log(`Clicked: ${target}`);
       // Save cookies — click may have triggered login/auth state change
-      await saveCookies(context);
+      await saveCookiesIfChanged(context);
       break;
     }
 
@@ -590,7 +595,7 @@ try {
       const selector = resolveSelector(target);
       await page.fill(selector, text, { timeout: 10000 });
       console.log(`Filled ${target}: ${text}`);
-      await saveCookies(context);
+      await saveCookiesIfChanged(context);
       break;
     }
 
@@ -602,7 +607,7 @@ try {
       const selector = resolveSelector(target);
       await page.type(selector, text);
       console.log(`Typed into ${target}: ${text}`);
-      await saveCookies(context);
+      await saveCookiesIfChanged(context);
       break;
     }
 
@@ -633,7 +638,7 @@ try {
       const { page, context } = await ensureBrowser();
       await page.keyboard.press(key);
       console.log(`Pressed: ${key}`);
-      await saveCookies(context);
+      await saveCookiesIfChanged(context);
       break;
     }
 
