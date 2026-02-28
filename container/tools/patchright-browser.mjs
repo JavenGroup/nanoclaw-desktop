@@ -426,6 +426,10 @@ try {
 
         const INTERACTIVE_SEL = 'a[href], button, input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [role="switch"], [role="combobox"], [role="option"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
 
+        // Phase 2: find non-semantic clickable elements via cursor:pointer heuristic
+        // Covers <span>/<div> with JS click handlers (like buttons, likes, follows on SPAs)
+        const POINTER_SKIP = new Set(['HTML', 'BODY', 'HEAD', 'SCRIPT', 'STYLE', 'LINK', 'META']);
+
         function isVisible(el) {
           const style = getComputedStyle(el);
           if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
@@ -491,9 +495,50 @@ try {
           return '[data-pb-ref="' + el._pbRefTemp + '"]';
         }
 
-        const candidates = interactive
-          ? Array.from(document.querySelectorAll(INTERACTIVE_SEL))
-          : Array.from(document.querySelectorAll('*'));
+        let candidates;
+        if (interactive) {
+          // Phase 1: standard interactive elements
+          const standard = new Set(document.querySelectorAll(INTERACTIVE_SEL));
+
+          // Phase 2: cursor:pointer heuristic for non-semantic clickable elements
+          // Performance guard: only scan viewport-visible, leaf-like elements
+          const vpH = window.innerHeight;
+          const pointerHits = [];
+          document.querySelectorAll('*').forEach(el => {
+            if (standard.has(el) || POINTER_SKIP.has(el.tagName)) return;
+            // Skip containers with many children (not a button)
+            if (el.childElementCount > 5) return;
+            // Skip elements that wrap a standard interactive child
+            if (el.querySelector(INTERACTIVE_SEL)) return;
+            // Skip off-viewport elements (cheap layout check, avoids getComputedStyle)
+            const rect = el.getBoundingClientRect();
+            if (rect.bottom < 0 || rect.top > vpH || rect.width === 0 || rect.height === 0) return;
+            // Skip oversized elements (likely page-level containers, not buttons)
+            if (rect.width > 600 && rect.height > 200) return;
+            try {
+              if (getComputedStyle(el).cursor === 'pointer') pointerHits.push(el);
+            } catch {}
+          });
+
+          // Deduplicate nested pointer elements: keep the outermost (shallowest)
+          // pointer element and remove its descendants. This groups visual children
+          // (icon + count) under one ref (e.g. like-wrapper) instead of splitting them.
+          const pointerSet = new Set(pointerHits);
+          for (const el of pointerHits) {
+            if (!pointerSet.has(el)) continue; // already removed as a descendant
+            // Remove all descendants of this element from the set
+            for (const other of pointerHits) {
+              if (other !== el && el.contains(other)) {
+                pointerSet.delete(other);
+              }
+            }
+          }
+          for (const el of pointerSet) standard.add(el);
+
+          candidates = Array.from(standard);
+        } else {
+          candidates = Array.from(document.querySelectorAll('*'));
+        }
         const elements = candidates.filter(isVisible);
         const results = [];
         let refIndex = 1;

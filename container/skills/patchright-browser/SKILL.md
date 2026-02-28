@@ -48,6 +48,15 @@ patchright-browser snapshot        # All visible elements
 patchright-browser snapshot -i     # Interactive elements only (recommended)
 ```
 
+**Viewport-aware**: `snapshot -i` only scans elements currently visible in the viewport. On long pages (feeds, comment sections), scroll to the target area first, then snapshot:
+
+```bash
+patchright-browser scroll down 800
+patchright-browser snapshot -i     # Only shows elements in current viewport
+```
+
+**Non-semantic buttons**: Detects clickable elements that lack standard attributes (no `role="button"`, not a `<button>` tag) but have `cursor: pointer` styling — common on Chinese SPAs (like/favorite/follow buttons on Xiaohongshu, Douyin, etc.).
+
 ### Interactions (use @refs from snapshot)
 
 ```bash
@@ -127,3 +136,5 @@ patchright-browser snapshot -i   # Verify logged in
 - Per-topic fingerprint diversification (window size, UA, Canvas, WebGL, Audio)
 - Login state persists across invocations (same topic = same browser profile)
 - Only available in Lume VM runtime (not in containers)
+- `snapshot -i` is viewport-scoped — scroll first to see off-screen elements
+- Refs (`@e1`, `@e2`) are reassigned on every snapshot — always re-snapshot after scrolling

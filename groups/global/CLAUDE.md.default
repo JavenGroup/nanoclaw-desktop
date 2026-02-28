@@ -89,10 +89,14 @@ For sites that block automation (xiaohongshu.com, taobao.com, etc.), use `patchr
 ```bash
 # Browse a protected site
 patchright-browser open "https://www.xiaohongshu.com/explore"
-patchright-browser snapshot -i   # Get interactive elements with @refs
+patchright-browser snapshot -i   # Get interactive elements with @refs (viewport only)
 patchright-browser click @e1     # Click by ref
 patchright-browser fill @e2 "text"  # Fill input by ref
 patchright-browser screenshot    # Screenshot to workspace
+
+# For elements below the fold (comments, feed items, like/fav buttons):
+patchright-browser scroll down 800
+patchright-browser snapshot -i   # Re-snapshot after scroll — refs are reassigned
 
 # Close when done
 patchright-browser close
