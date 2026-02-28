@@ -19,12 +19,17 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
+    "global-agent": "^4.1.2",
     "grammy": "^1.40.0",
+    "hpagent": "^1.2.0",
+    "https-proxy-agent": "^7.0.6",
     "openai": "^6.25.0",
     "patchright": "^1.57.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "qrcode-terminal": "^0.12.0",
+    "socks-proxy-agent": "^8.0.5",
+    "undici": "^7.22.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
