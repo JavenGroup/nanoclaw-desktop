@@ -1,10 +1,9 @@
-import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, DATA_DIR, TELEGRAM_PROXY, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import { transcribeAudio } from '../transcription.js';
 import {
@@ -54,94 +53,7 @@ export class TelegramChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    const botOpts: ConstructorParameters<typeof Bot>[1] = {};
-    if (TELEGRAM_PROXY) {
-      const proxy = TELEGRAM_PROXY;
-
-      // curl-based fetch: delegates HTTP requests to curl through the proxy.
-      // Node.js TLS + proxy agents are unreliable for Telegram; curl is robust.
-      const curlFetch = (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        return new Promise((resolve, reject) => {
-          const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as any).url || url.toString();
-          const method = init?.method || 'GET';
-          const args = ['-x', proxy, '-s', '-i', '--max-time', '610', '-X', method];
-
-          const headers = init?.headers;
-          if (headers && typeof headers === 'object' && !(headers instanceof Headers)) {
-            for (const [k, v] of Object.entries(headers as Record<string, string>)) {
-              args.push('-H', `${k}: ${v}`);
-            }
-          }
-
-          if (init?.body) {
-            args.push('--data-binary', '@-'); // read body from stdin
-          }
-          args.push(urlStr);
-
-          const proc = execFile('curl', args, {
-            maxBuffer: 50 * 1024 * 1024,
-            encoding: 'buffer',
-          }, (err, stdout) => {
-            if (err && err.killed) { reject(new Error('Request aborted')); return; }
-            if (err && (!stdout || stdout.length === 0)) { reject(err); return; }
-
-            // Parse HTTP response: headers + body separated by \r\n\r\n
-            const raw = stdout.toString();
-            // Find the last HTTP header block (curl may output 1xx/2xx intermediate responses)
-            let headerEnd = -1;
-            let searchFrom = 0;
-            while (true) {
-              const idx = raw.indexOf('\r\n\r\n', searchFrom);
-              if (idx === -1) break;
-              headerEnd = idx;
-              // Check if there's another HTTP/ line after this separator
-              const afterSep = raw.slice(idx + 4);
-              if (afterSep.startsWith('HTTP/')) {
-                searchFrom = idx + 4;
-                continue;
-              }
-              break;
-            }
-            if (headerEnd === -1) { resolve(new Response(raw, { status: 200 })); return; }
-
-            const headerSection = raw.slice(0, headerEnd);
-            const body = raw.slice(headerEnd + 4);
-
-            // Parse last HTTP status line
-            const statusMatch = headerSection.match(/HTTP\/[\d.]+ (\d+)/g);
-            const lastStatus = statusMatch ? statusMatch[statusMatch.length - 1] : null;
-            const status = lastStatus ? parseInt(lastStatus.match(/(\d+)$/)![1]) : 200;
-
-            // Parse headers from last header block
-            const lastHeaderBlock = headerSection.split('\r\n\r\n').pop() || headerSection;
-            const respHeaders: Record<string, string> = {};
-            for (const line of lastHeaderBlock.split('\r\n')) {
-              if (line.startsWith('HTTP/')) continue;
-              const idx = line.indexOf(':');
-              if (idx > 0) respHeaders[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
-            }
-
-            resolve(new Response(body, { status, headers: respHeaders }));
-          });
-
-          // Write body to stdin if present
-          if (init?.body && proc.stdin) {
-            proc.stdin.write(typeof init.body === 'string' ? init.body : String(init.body));
-            proc.stdin.end();
-          }
-
-          // Handle abort signal
-          if (init?.signal) {
-            if (init.signal.aborted) { proc.kill(); return; }
-            init.signal.addEventListener('abort', () => proc.kill(), { once: true });
-          }
-        });
-      };
-
-      botOpts.client = { baseFetchConfig: {}, fetch: curlFetch as any };
-      logger.info({ proxy }, 'Telegram bot using proxy (curl)');
-    }
-    this.bot = new Bot(this.botToken, botOpts);
+    this.bot = new Bot(this.botToken);
 
     this.bot.command('chatid', (ctx) => {
       const chatId = ctx.chat.id;

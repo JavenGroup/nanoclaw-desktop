@@ -3,7 +3,6 @@ import path from 'path';
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_ONLY = process.env.TELEGRAM_ONLY === 'true';
-export const TELEGRAM_PROXY = process.env.TELEGRAM_PROXY || '';
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
