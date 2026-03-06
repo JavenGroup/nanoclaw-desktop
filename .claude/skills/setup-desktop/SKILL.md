@@ -15,9 +15,9 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 
 1. **Lume CLI syntax**: Uses positional args, NOT `--name`. Correct: `lume run my-vm`, `lume get my-vm`. Wrong: `lume run --name my-vm`. No `--display` flag exists (display is on by default, use `--no-display` to disable).
 
-2. **VM requires manual setup**: After `lume create` + `lume run`, a macOS Setup Assistant appears in the VM window. The user MUST manually complete it. **Explicitly tell them** to create user `lume` / password `lume` and enable Remote Login. Many users assume this is automatic — it is NOT.
+2. **VM setup is automated via `--unattended tahoe`**: `lume create` with the `--unattended tahoe` flag automatically completes the macOS Setup Assistant, creates user `lume`/`lume`, and enables SSH. Requires `sshpass` (`brew install hudochenkov/sshpass/sshpass`). After creation, SSH in to configure Automatic Login (not covered by the preset).
 
-3. **SSH won't work until Remote Login is enabled**: Port 22 is closed by default. User must go to System Settings → General → Sharing → Remote Login inside the VM. Do NOT attempt SSH until user confirms this.
+3. **SSH works after unattended setup**: The `tahoe` preset includes an SSH health check that verifies connectivity. If SSH fails after unattended setup, something went wrong — use `--debug` to capture screenshots and troubleshoot.
 
 4. **VM user has no sudo/admin**: Homebrew install will fail. Use Node.js prebuilt binary (`~/local/bin`) instead of `brew install node`.
 
@@ -47,7 +47,7 @@ These are real issues encountered during setup. Follow this guidance to avoid th
 
 17. **Telegram long-polling can go stale**: After the bot runs for a long time, the Telegram polling connection may silently drop. Messages arrive but the bot doesn't see them. The launchd `KeepAlive` auto-restarts on crash, but silent polling failures don't crash. If the user reports "no response", first try restarting the service.
 
-18. **NEVER start `lume run` as a Claude Code subprocess**: `lume run` is a blocking foreground process — the VM lives only as long as it does. If started via Bash tool (even with `run_in_background`), it becomes a child of Claude Code and gets killed when the session ends, stopping the VM. For **existing VMs**, don't start `lume run` at all — NanoClaw's `ensureLumeVmRunning()` manages it automatically via detached spawn. For **fresh VMs** needing one-time manual macOS setup, the user must run `lume run` in a separate terminal (they need the display window to create the user account and enable SSH).
+18. **NEVER start `lume run` as a Claude Code subprocess**: `lume run` is a blocking foreground process — the VM lives only as long as it does. If started via Bash tool (even with `run_in_background`), it becomes a child of Claude Code and gets killed when the session ends, stopping the VM. For **existing VMs**, don't start `lume run` at all — NanoClaw's `ensureLumeVmRunning()` manages it automatically via detached spawn. For **fresh VMs**, `lume create --unattended tahoe` handles setup without needing a display window, so no separate terminal is needed.
 
 19. **VM must have Automatic Login enabled**: The patchright anti-detection browser runs in headed mode and requires an active GUI session (WindowServer). Without auto-login, the VM boots to a lock screen and Chromium cannot render. Configure in the VM: System Settings → Users & Groups → Automatic Login → select `lume`.
 
@@ -140,47 +140,50 @@ ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no lume@VM_IP 'echo SSH OK'
 ```
 If SSH works now → skip to step 3d. If still failing → the VM needs manual macOS setup; follow Case B.
 
-#### Case B: Fresh VM (needs one-time manual setup)
+#### Case B: Fresh VM (automated unattended setup)
 
-If no VM exists, create one:
+If no VM exists, first ensure `sshpass` is installed (required by the unattended health check):
 ```bash
-lume create default --os macos
+which sshpass || brew install hudochenkov/sshpass/sshpass
 ```
 
-This downloads a macOS restore image and creates the VM. It takes a while (several GB download).
+Then create the VM with unattended setup:
+```bash
+lume create default --os macos --ipsw latest --unattended tahoe
+```
 
-**Do NOT start `lume run` as a Claude Code subprocess** (no `run_in_background`). The process would be killed when the Claude Code session ends, stopping the VM. For the initial setup, the user must run it in a separate terminal because they need to interact with the VM's display window:
+This downloads a macOS restore image, boots the VM, and automatically:
+- Navigates the macOS Setup Assistant (language, region, terms, etc.)
+- Creates user `lume` with password `lume`
+- Enables SSH (Remote Login)
+- Verifies SSH connectivity via health check
 
-> Open a **separate terminal window** and run:
-> ```
-> lume run VM_NAME --shared-dir PROJECT_ROOT
-> ```
-> This opens a VM window where you'll complete the one-time macOS setup.
-> After setup is done, you can close this terminal — NanoClaw will manage the VM automatically from then on.
+The whole process takes several minutes (large download + automated UI navigation). If it fails, retry with `--debug` to capture screenshots:
+```bash
+lume create default --os macos --ipsw latest --unattended tahoe --debug
+```
+Debug screenshots are saved to `/tmp/unattended-<uuid>/`.
 
-Wait for the user to confirm the VM window appeared before proceeding. The VM will take 1-2 minutes to boot.
+### 3c. Post-setup: Enable Automatic Login
 
-### 3c. Manual macOS Setup (Fresh VM only — requires user action)
+After unattended setup completes, the VM has SSH access but still needs Automatic Login configured (required for the patchright anti-detection browser, which runs in headed mode and needs an active GUI session).
 
-**Only needed for fresh VMs. Skip if the VM already has SSH access (Case A above).**
+Start the VM headless, then configure via SSH:
+```bash
+lume run default --no-display &
+sleep 30
+```
 
-The VM requires manual setup through its display window. This is NOT automatic. Tell the user:
+Enable Automatic Login:
+```bash
+sshpass -p "lume" ssh -o StrictHostKeyChecking=no lume@$(lume get default --format json 2>/dev/null | grep -o '"ipAddress":"[^"]*"' | cut -d'"' -f4) \
+  'echo "lume" | sudo -S defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser lume'
+```
 
-> A macOS VM window should have appeared on your screen. You need to complete the initial setup manually:
->
-> 1. **Complete the macOS Setup Assistant** — click through language, region, accessibility, etc.
-> 2. **Create a user account** with these credentials:
->    - Username: **lume**
->    - Password: **lume**
->    - (These match what NanoClaw expects for SSH access)
-> 3. **After reaching the desktop**, go to **System Settings → General → Sharing**
-> 4. **Enable "Remote Login"** (this enables SSH so NanoClaw can connect to the VM)
-> 5. **Enable Automatic Login**: go to **System Settings → Users & Groups → Automatic Login** → select **lume**
->    - (This ensures the patchright anti-detection browser works after VM reboots — it requires an active GUI session)
->
-> Let me know when you've completed all 5 steps.
-
-**Wait for user confirmation before proceeding.** Do not attempt SSH until the user confirms.
+Stop the VM (NanoClaw will manage it from here):
+```bash
+lume stop default
+```
 
 ### 3d. Get the VM IP and set up SSH key access
 
@@ -533,13 +536,13 @@ Tell the user:
 - Note: `lume get` may show "stopped" even when the VM is running. Test SSH directly.
 
 **SSH connection refused:**
-- Verify "Remote Login" is enabled in VM: System Settings → General → Sharing → Remote Login
+- If fresh VM: unattended setup should have enabled SSH. Retry with `--debug` to check what went wrong
 - The VM may need 1-2 minutes to fully boot after creation
 - Try: `ssh -o StrictHostKeyChecking=no lume@VM_IP`
 
 **SSH permission denied:**
 - Key-based auth may not be set up. Use `sshpass -p "lume" ssh-copy-id lume@VM_IP`
-- Verify the VM user was created with username `lume` and password `lume`
+- Verify the VM user was created with username `lume` and password `lume` (the `tahoe` preset does this automatically)
 
 **`command not found: node` in VM:**
 - Node.js was installed to `~/local/bin` which isn't in PATH for non-login SSH shells
