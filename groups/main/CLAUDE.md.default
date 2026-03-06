@@ -10,7 +10,7 @@ Groups are stored in SQLite (`/workspace/project/store/messages.db`, table `regi
 
 ```bash
 sqlite3 /workspace/project/store/messages.db "
-  SELECT jid, name, folder, requires_trigger, runtime
+  SELECT jid, name, folder, requires_trigger, runtime, bot_id, is_admin
   FROM registered_groups
   ORDER BY added_at DESC;
 "
@@ -21,9 +21,9 @@ sqlite3 /workspace/project/store/messages.db "
 ```bash
 sqlite3 /workspace/project/store/messages.db "
   INSERT INTO registered_groups
-    (jid, name, folder, trigger_pattern, added_at, requires_trigger, runtime)
+    (jid, name, folder, trigger_pattern, added_at, requires_trigger, runtime, bot_id, is_admin)
   VALUES
-    ('tg:CHAT_ID', 'Group Name', 'folder-name', '@Andy', datetime('now'), 0, 'lume');
+    ('tg:CHAT_ID', 'Group Name', 'folder-name', '@Andy', datetime('now'), 0, 'lume', 'BOT_ID', 0);
 "
 ```
 
@@ -31,6 +31,8 @@ sqlite3 /workspace/project/store/messages.db "
 - `folder`: must be unique — used as workspace directory name under `groups/`
 - `requires_trigger`: `0` = all messages processed, `1` = only `@Andy` messages
 - `runtime`: `'lume'` for Lume VM, `NULL` for container
+- `bot_id`: Telegram bot numeric ID (get from `/chatid` response or logs)
+- `is_admin`: `1` for admin channel (cross-group IPC, full task visibility), `0` for regular
 
 After adding, create the group folder:
 ```bash
@@ -73,10 +75,10 @@ The task runs in that group's context with access to their files and memory.
 
 | VM Path | Host Path | Purpose |
 |---------|-----------|---------|
-| `/workspace/group/` | `groups/main/` | This workspace |
+| `/workspace/group/` | `groups/{this-folder}/` | This workspace |
 | `/workspace/global/` | `groups/global/` | Shared agent instructions |
 | `/workspace/project/` | Project root | Full project access (admin only) |
-| `/workspace/ipc/` | `data/ipc/main/` | IPC messages/tasks |
+| `/workspace/ipc/` | `data/ipc/{this-folder}/` | IPC messages/tasks |
 
 ## Global Memory
 

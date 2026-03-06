@@ -548,25 +548,44 @@ function ensureContainerSystemRunning(): void {
 /**
  * Generate CLAUDE.md files from .default templates if they don't exist.
  * Replaces the default persona name "Andy" with ASSISTANT_NAME from .env.
+ *
+ * For group-specific CLAUDE.md, finds the admin group's folder from the DB
+ * (e.g. 'andy-dm'), falling back to legacy 'main'.
  */
 function generateClaudeMdFiles(): void {
+  // Determine the admin DM folder: look for is_admin=1, fall back to 'main'
+  let adminFolder = 'main';
+  const adminGroup = Object.values(registeredGroups).find(g => g.isAdmin === true);
+  if (adminGroup) adminFolder = adminGroup.folder;
+
   const pairs = [
     { dir: 'global', file: 'CLAUDE.md' },
-    { dir: 'main', file: 'CLAUDE.md' },
+    { dir: adminFolder, file: 'CLAUDE.md' },
   ];
 
   for (const { dir, file } of pairs) {
     const target = path.join(GROUPS_DIR, dir, file);
+    // Look for template in same dir first, then fall back to global template
     const template = `${target}.default`;
+    const legacyTemplate = path.join(GROUPS_DIR, 'main', `${file}.default`);
 
     if (fs.existsSync(target)) continue;
-    if (!fs.existsSync(template)) {
+
+    let templatePath: string | null = null;
+    if (fs.existsSync(template)) {
+      templatePath = template;
+    } else if (dir !== 'main' && dir !== 'global' && fs.existsSync(legacyTemplate)) {
+      // New-convention folder (e.g. 'andy-dm') — copy from legacy 'main' template
+      templatePath = legacyTemplate;
+    }
+
+    if (!templatePath) {
       logger.warn({ template }, 'Template not found, skipping CLAUDE.md generation');
       continue;
     }
 
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    let content = fs.readFileSync(template, 'utf-8');
+    let content = fs.readFileSync(templatePath, 'utf-8');
     if (ASSISTANT_NAME !== 'Andy') {
       content = content.replaceAll('Andy', ASSISTANT_NAME);
     }

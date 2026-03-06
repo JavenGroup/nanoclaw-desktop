@@ -209,11 +209,11 @@ export class TelegramChannel implements Channel {
       // General topic messages carry a message_thread_id but is_topic_message is false;
       // using that thread ID for replies causes "message thread not found" errors.
       const threadId = ctx.message.is_topic_message ? ctx.message.message_thread_id : undefined;
-      const chatJid = buildTopicJid(ctx.chat.id, threadId);
 
       // Multi-bot guard: skip if this chat isn't registered to this bot
       if (!isMyChatId(ctx.chat.id, threadId)) return;
 
+      const chatJid = buildTopicJid(ctx.chat.id, threadId);
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
@@ -562,6 +562,7 @@ export class TelegramChannel implements Channel {
       const threadId = ctx.message.message_thread_id;
       const topicName = (ctx.message.forum_topic_created as any)?.name;
       if (!threadId || !topicName) return;
+      if (!isMyChatId(ctx.chat.id, threadId)) return;
 
       const chatJid = buildTopicJid(ctx.chat.id, threadId);
       const base = stripTopicSuffix(chatJid);
@@ -577,6 +578,7 @@ export class TelegramChannel implements Channel {
       const threadId = ctx.message.message_thread_id;
       const topicName = (ctx.message.forum_topic_edited as any)?.name;
       if (!threadId || !topicName) return;
+      if (!isMyChatId(ctx.chat.id, threadId)) return;
 
       const chatJid = buildTopicJid(ctx.chat.id, threadId);
       const base = stripTopicSuffix(chatJid);

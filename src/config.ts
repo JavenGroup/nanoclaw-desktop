@@ -41,8 +41,6 @@ export const ALL_TELEGRAM_BOT_ENTRIES: BotTokenEntry[] = (() => {
   return entries;
 })();
 
-/** All unique Telegram bot tokens (convenience accessor). */
-export const ALL_TELEGRAM_BOT_TOKENS: string[] = ALL_TELEGRAM_BOT_ENTRIES.map(e => e.token);
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;

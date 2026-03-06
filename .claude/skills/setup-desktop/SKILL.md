@@ -255,7 +255,7 @@ Lume VMs use VirtioFS for host-VM file sharing (passed via `--shared-dir` when s
 ```bash
 # Ensure data directories exist
 mkdir -p data/ipc data/sessions
-mkdir -p groups/global groups/main
+mkdir -p groups/global
 ```
 
 Verify from inside the VM:
@@ -444,12 +444,13 @@ If the user chose a name other than `Andy`, add to `.env`:
 ASSISTANT_NAME=ChosenName
 ```
 
-The persona files (`groups/global/CLAUDE.md`, `groups/main/CLAUDE.md`) are auto-generated from `.default` templates on startup, with "Andy" replaced by `ASSISTANT_NAME`. No manual file edits needed.
+The persona files (`groups/global/CLAUDE.md`, `groups/{admin-folder}/CLAUDE.md`) are auto-generated from `.default` templates on startup, with "Andy" replaced by `ASSISTANT_NAME`. No manual file edits needed.
 
 To regenerate with a new name, delete the existing `CLAUDE.md` files and restart:
 ```bash
-rm groups/global/CLAUDE.md groups/main/CLAUDE.md
+rm groups/global/CLAUDE.md groups/LABEL-dm/CLAUDE.md
 ```
+(Replace `LABEL-dm` with the actual admin folder name, e.g. `andy-dm`.)
 
 ## 6. Configure launchd Service (Optional)
 
@@ -568,7 +569,7 @@ Tell the user:
 
 **Bot responds with wrong name:**
 - Check `ASSISTANT_NAME` in `.env` is set correctly
-- Delete `groups/global/CLAUDE.md` and `groups/main/CLAUDE.md`, then restart — they'll regenerate from `.default` templates with the correct name
+- Delete `groups/global/CLAUDE.md` and `groups/LABEL-dm/CLAUDE.md` (the admin folder), then restart — they'll regenerate from `.default` templates with the correct name
 
 **Messages going to wrong topic:**
 - This shouldn't happen — each topic auto-creates its own workspace

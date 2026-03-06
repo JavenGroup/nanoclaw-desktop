@@ -122,7 +122,7 @@ mkdir -p groups/LABEL-dm groups/LABEL-forum
 
 ## 5. Verify
 
-After registration, the service needs to reload the group list. Restart the service or wait for the next poll cycle.
+After registration, restart the service to reload the group list.
 
 Test by sending a message in the newly registered group:
 > Send `@ASSISTANT_NAME hello` in the group managed by the new bot.
