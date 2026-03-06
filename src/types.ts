@@ -40,6 +40,7 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   runtime?: 'container' | 'lume'; // Default: 'container'
+  botId?: string; // Telegram bot ID that owns this group (null = default/any bot)
 }
 
 export interface NewMessage {

@@ -83,14 +83,40 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private _botId = '';
+  private _isDefaultBot: boolean;
+  /** JIDs registered to this bot — populated via refreshOwnedJids(). */
+  private ownedJids = new Set<string>();
 
   /** Buffer for media group messages: media_group_id → pending messages + debounce timer. */
   private mediaGroupBuffer = new Map<string, { items: PendingMessage[]; timer: NodeJS.Timeout }>();
   private static MEDIA_GROUP_DEBOUNCE_MS = 1500;
 
-  constructor(botToken: string, opts: TelegramChannelOpts) {
+  constructor(botToken: string, opts: TelegramChannelOpts, isDefaultBot = false) {
     this.botToken = botToken;
     this.opts = opts;
+    this._isDefaultBot = isDefaultBot;
+  }
+
+  /** Telegram bot numeric ID (available after connect). */
+  get botId(): string { return this._botId; }
+
+  /** Whether this is the default/primary bot (first token). */
+  get isDefaultBot(): boolean { return this._isDefaultBot; }
+
+  /**
+   * Rebuild the set of JIDs this bot owns from registered groups.
+   * Must be called after any registration change.
+   */
+  refreshOwnedJids(groups: Record<string, import('../types.js').RegisteredGroup>): void {
+    this.ownedJids.clear();
+    for (const [jid, group] of Object.entries(groups)) {
+      if (!jid.startsWith('tg:')) continue;
+      // Owns this JID if explicitly assigned, or if unassigned and we're the default bot
+      if (group.botId === this._botId || (!group.botId && this._isDefaultBot)) {
+        this.ownedJids.add(jid);
+      }
+    }
   }
 
   /**
@@ -156,6 +182,7 @@ export class TelegramChannel implements Channel {
       if (ctx.message?.message_thread_id !== undefined && !isTopicMessage) {
         reply += `\n_(General topic — uses base Chat ID)_`;
       }
+      reply += `\nBot: @${ctx.me?.username} (ID: \`${this._botId}\`)`;
 
       ctx.reply(reply, { parse_mode: 'Markdown' });
     });
@@ -563,16 +590,19 @@ export class TelegramChannel implements Channel {
     return new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: (botInfo) => {
+          this._botId = botInfo.id.toString();
+          this.name = `telegram:${this._botId}`;
           logger.info(
-            { username: botInfo.username, id: botInfo.id },
+            { username: botInfo.username, id: botInfo.id, isDefault: this._isDefaultBot },
             'Telegram bot connected',
           );
           if (!botInfo.can_read_all_group_messages) {
             logger.warn(
+              { username: botInfo.username },
               'Bot privacy mode is ON — bot cannot see messages in groups unless mentioned or made admin',
             );
           }
-          console.log(`\n  Telegram bot: @${botInfo.username}`);
+          console.log(`\n  Telegram bot: @${botInfo.username} (ID: ${botInfo.id})${this._isDefaultBot ? ' [default]' : ''}`);
           console.log(
             '  Send /chatid to the bot to get a chat\'s registration ID\n',
           );
@@ -664,7 +694,9 @@ export class TelegramChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.startsWith('tg:');
+    if (!jid.startsWith('tg:')) return false;
+    // Check exact JID and base group JID (for topic-suffixed JIDs like tg:-100xxx/16)
+    return this.ownedJids.has(jid) || this.ownedJids.has(stripTopicSuffix(jid));
   }
 
   async disconnect(): Promise<void> {

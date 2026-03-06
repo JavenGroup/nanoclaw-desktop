@@ -406,20 +406,22 @@ The JSON will be auto-migrated to SQLite on first startup.
 If the database already exists (JSON was already migrated), use SQL instead:
 
 ```sql
--- Admin DM channel
+-- Admin DM channel (bot_id is auto-backfilled on first startup if NULL)
 sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
-  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime)
-  VALUES ('DM_CHAT_JID', 'main', 'main', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume');"
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id)
+  VALUES ('DM_CHAT_JID', 'main', 'main', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume', NULL);"
 
 -- Project group channel (set requires_trigger=1 if group has other people, 0 if just user+bot)
 sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
-  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime)
-  VALUES ('GROUP_CHAT_JID', 'GROUP_NAME', 'workspace', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume');"
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id)
+  VALUES ('GROUP_CHAT_JID', 'GROUP_NAME', 'workspace', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume', NULL);"
 ```
+
+The `bot_id` is set to NULL here — it will be automatically backfilled with the default bot's ID on startup. To add more bots later, use `/add-telegram-bot`.
 
 Verify:
 ```bash
-sqlite3 store/messages.db "SELECT jid, name, folder, requires_trigger FROM registered_groups;"
+sqlite3 store/messages.db "SELECT jid, name, folder, requires_trigger, bot_id FROM registered_groups;"
 ```
 
 **Important:**

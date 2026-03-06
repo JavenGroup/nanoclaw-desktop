@@ -3,6 +3,19 @@ import path from 'path';
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_ONLY = process.env.TELEGRAM_ONLY === 'true';
+
+/** All unique Telegram bot tokens: primary + any extras from TELEGRAM_BOT_TOKENS. */
+export const ALL_TELEGRAM_BOT_TOKENS: string[] = (() => {
+  const tokens: string[] = [];
+  if (TELEGRAM_BOT_TOKEN) tokens.push(TELEGRAM_BOT_TOKEN);
+  const extra = process.env.TELEGRAM_BOT_TOKENS || '';
+  if (extra) {
+    for (const t of extra.split(',').map(s => s.trim()).filter(Boolean)) {
+      if (!tokens.includes(t)) tokens.push(t);
+    }
+  }
+  return tokens;
+})();
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;

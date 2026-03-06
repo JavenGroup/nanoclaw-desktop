@@ -92,6 +92,15 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add bot_id column if it doesn't exist (migration for multi-bot support)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN bot_id TEXT DEFAULT NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -500,6 +509,7 @@ export function getRegisteredGroup(
         container_config: string | null;
         requires_trigger: number | null;
         runtime: string | null;
+        bot_id: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -514,6 +524,7 @@ export function getRegisteredGroup(
       : undefined,
     requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     runtime: (row.runtime as RegisteredGroup['runtime']) || undefined,
+    botId: row.bot_id || undefined,
   };
 }
 
@@ -522,8 +533,8 @@ export function setRegisteredGroup(
   group: RegisteredGroup,
 ): void {
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -533,6 +544,7 @@ export function setRegisteredGroup(
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.runtime || null,
+    group.botId || null,
   );
 }
 
@@ -558,6 +570,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     container_config: string | null;
     requires_trigger: number | null;
     runtime: string | null;
+    bot_id: string | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -571,9 +584,18 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         : undefined,
       requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       runtime: (row.runtime as RegisteredGroup['runtime']) || undefined,
+      botId: row.bot_id || undefined,
     };
   }
   return result;
+}
+
+/** Backfill bot_id for all Telegram groups that have no bot assigned. */
+export function backfillBotId(botId: string): number {
+  const result = db
+    .prepare(`UPDATE registered_groups SET bot_id = ? WHERE bot_id IS NULL AND jid LIKE 'tg:%'`)
+    .run(botId);
+  return result.changes;
 }
 
 // --- JSON migration ---

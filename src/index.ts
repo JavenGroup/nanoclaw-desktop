@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ALL_TELEGRAM_BOT_TOKENS,
   ASSISTANT_NAME,
   DATA_DIR,
   GROUPS_DIR,
@@ -23,6 +24,7 @@ import {
 } from './container-runner.js';
 import { runLumeAgent } from './lume-runner.js';
 import {
+  backfillBotId,
   clearSession,
   getAllChats,
   getAllRegisteredGroups,
@@ -57,6 +59,7 @@ let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
 const channels: Channel[] = [];
+const telegramBots: TelegramChannel[] = [];
 const queue = new GroupQueue();
 
 function loadState(): void {
@@ -92,10 +95,20 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
+  // Refresh bot JID ownership so the new group is routable
+  refreshAllBotJids();
+
   logger.info(
-    { jid, name: group.name, folder: group.folder },
+    { jid, name: group.name, folder: group.folder, botId: group.botId },
     'Group registered',
   );
+}
+
+/** Refresh owned JIDs for all Telegram bot instances. */
+function refreshAllBotJids(): void {
+  for (const bot of telegramBots) {
+    bot.refreshOwnedJids(registeredGroups);
+  }
 }
 
 /**
@@ -617,8 +630,10 @@ async function main(): Promise<void> {
     await whatsapp.connect();
   }
 
-  if (TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, {
+  for (let i = 0; i < ALL_TELEGRAM_BOT_TOKENS.length; i++) {
+    const token = ALL_TELEGRAM_BOT_TOKENS[i];
+    const isDefault = (token === TELEGRAM_BOT_TOKEN) || (i === 0);
+    const telegram = new TelegramChannel(token, {
       ...channelOpts,
       onMigrateGroup: (oldJid, newJid) => {
         if (migrateRegisteredGroupJid(oldJid, newJid)) {
@@ -627,12 +642,34 @@ async function main(): Promise<void> {
             registeredGroups[newJid] = group;
             delete registeredGroups[oldJid];
           }
+          refreshAllBotJids();
           logger.info({ oldJid, newJid }, 'Group registration migrated to supergroup ID');
         }
       },
-    });
+    }, isDefault);
     channels.push(telegram);
+    telegramBots.push(telegram);
     await telegram.connect();
+
+    // Backfill bot_id for existing groups that have none (first-time migration)
+    if (isDefault) {
+      const filled = backfillBotId(telegram.botId);
+      if (filled > 0) {
+        logger.info({ botId: telegram.botId, count: filled }, 'Backfilled bot_id for existing Telegram groups');
+        // Reload groups to pick up the backfilled bot_id values
+        registeredGroups = getAllRegisteredGroups();
+      }
+    }
+
+    telegram.refreshOwnedJids(registeredGroups);
+  }
+
+  // Warn about orphaned groups (bot_id not matching any connected bot)
+  const connectedBotIds = new Set(telegramBots.map(b => b.botId));
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (jid.startsWith('tg:') && group.botId && !connectedBotIds.has(group.botId)) {
+      logger.warn({ jid, botId: group.botId }, 'Orphaned group: bot_id not in connected bots');
+    }
   }
 
   // Start subsystems (independently of connection handler)

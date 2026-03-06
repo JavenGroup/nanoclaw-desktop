@@ -35,6 +35,7 @@ Single Node.js process that connects to Telegram, routes messages to Claude Code
 | Skill | When to Use |
 |-------|-------------|
 | `/setup-desktop` | First-time installation with Lume VM + Telegram |
+| `/add-telegram-bot` | Add additional Telegram bots (multi-bot support) |
 | `/setup` | Original upstream setup (WhatsApp + Apple Container) |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
