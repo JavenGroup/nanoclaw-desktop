@@ -32,25 +32,33 @@ If they need to create one:
 
 Wait for the token.
 
+Ask the user:
+> What label do you want for this bot? (e.g. `Sales`, `Support`, `Andy2`)
+>
+> This label is used for folder naming: `{label}-dm/`, `{label}-forum/`.
+> If you don't specify one, it defaults to `{ASSISTANT_NAME}N` (e.g. `Andy2`).
+
 ## 2. Add Token to .env
 
-Read the current `.env` file. Add the new token:
+Read the current `.env` file. Add the new token with its label using `token:Label` format:
 
-- If `TELEGRAM_BOT_TOKENS` exists, append the new token (comma-separated)
-- If it doesn't exist, add: `TELEGRAM_BOT_TOKENS=new_token`
+- If `TELEGRAM_BOT_TOKENS` exists, append: `TELEGRAM_BOT_TOKENS=existing,new_token:Label`
+- If it doesn't exist, add: `TELEGRAM_BOT_TOKENS=new_token:Label`
 
 **Important:** Do NOT modify `TELEGRAM_BOT_TOKEN` (that's the primary/default bot). The new token goes in `TELEGRAM_BOT_TOKENS`.
 
 Example result:
 ```
 TELEGRAM_BOT_TOKEN=existing_primary_token
-TELEGRAM_BOT_TOKENS=new_token_here
+TELEGRAM_BOT_TOKENS=new_token:Sales
 ```
 
 If there are already extra tokens:
 ```
-TELEGRAM_BOT_TOKENS=existing_extra,new_token_here
+TELEGRAM_BOT_TOKENS=existing_extra:Andy2,new_token:Sales
 ```
+
+Omit the `:Label` part to auto-number (Andy2, Andy3, etc.).
 
 ## 3. Restart the Service
 
@@ -78,25 +86,33 @@ Tell the user:
 > Now add the new bot to your Telegram group(s) and send `/chatid` in each group.
 > The bot will reply with the Chat ID **and** its own Bot ID.
 
-Once you have the chat JID and bot ID, register the group:
+Once you have the chat JID and bot ID, register channels using the bot label for folder naming.
+
+**Folder convention:** `{label}-dm` for DM, `{label}-forum` for groups (where `label` is the bot's label lowercased).
 
 ```bash
+# Register DM (admin channel for this bot — set is_admin=1 if this is the user's admin channel)
 sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
-  (jid, name, folder, trigger_pattern, added_at, requires_trigger, runtime, bot_id)
-  VALUES ('CHAT_JID', 'GROUP_NAME', 'FOLDER_NAME', '@ASSISTANT_NAME', datetime('now'), TRIGGER_VALUE, 'lume', 'BOT_ID');"
+  (jid, name, folder, trigger_pattern, added_at, requires_trigger, runtime, bot_id, is_admin)
+  VALUES ('DM_CHAT_JID', 'LABEL', 'LABEL-dm', '@ASSISTANT_NAME', datetime('now'), 0, 'lume', 'BOT_ID', 0);"
+
+# Register group
+sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
+  (jid, name, folder, trigger_pattern, added_at, requires_trigger, runtime, bot_id, is_admin)
+  VALUES ('GROUP_CHAT_JID', 'LABEL', 'LABEL-forum', '@ASSISTANT_NAME', datetime('now'), TRIGGER_VALUE, 'lume', 'BOT_ID', 0);"
 ```
 
 Where:
+- `LABEL` — bot's label lowercased (e.g., `sales`, `andy2`)
 - `CHAT_JID` — from `/chatid` (e.g., `tg:-1003766556846`)
-- `GROUP_NAME` — descriptive name
-- `FOLDER_NAME` — unique workspace folder name (e.g., `project-b`)
 - `ASSISTANT_NAME` — from `.env` (`ASSISTANT_NAME`)
 - `TRIGGER_VALUE` — `0` if only user+bot in group, `1` if group has other people
 - `BOT_ID` — the numeric bot ID from `/chatid` response or logs
+- `is_admin` — `1` for admin channel (cross-group IPC, full task visibility), `0` for regular. Usually only the primary bot's DM is admin.
 
-Create the workspace folder:
+Create the workspace folders:
 ```bash
-mkdir -p groups/FOLDER_NAME
+mkdir -p groups/LABEL-dm groups/LABEL-forum
 ```
 
 **Important:**
@@ -122,7 +138,7 @@ You should see the message being received and processed by the correct bot.
 
 ### List all bots and their groups
 ```bash
-sqlite3 store/messages.db "SELECT bot_id, jid, name, folder FROM registered_groups WHERE jid LIKE 'tg:%' ORDER BY bot_id;"
+sqlite3 store/messages.db "SELECT bot_id, jid, name, folder, is_admin FROM registered_groups WHERE jid LIKE 'tg:%' ORDER BY bot_id;"
 ```
 
 ### Move a group to a different bot

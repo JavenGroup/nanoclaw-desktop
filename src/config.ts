@@ -4,18 +4,45 @@ export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_ONLY = process.env.TELEGRAM_ONLY === 'true';
 
-/** All unique Telegram bot tokens: primary + any extras from TELEGRAM_BOT_TOKENS. */
-export const ALL_TELEGRAM_BOT_TOKENS: string[] = (() => {
-  const tokens: string[] = [];
-  if (TELEGRAM_BOT_TOKEN) tokens.push(TELEGRAM_BOT_TOKEN);
+export interface BotTokenEntry {
+  token: string;
+  label: string;
+}
+
+/**
+ * All Telegram bot token+label pairs.
+ * Format: TELEGRAM_BOT_TOKENS=token2:Label2,token3:Label3
+ * Primary TELEGRAM_BOT_TOKEN gets ASSISTANT_NAME as label.
+ * Unlabeled extras get auto-numbered: Andy2, Andy3, etc.
+ */
+export const ALL_TELEGRAM_BOT_ENTRIES: BotTokenEntry[] = (() => {
+  const entries: BotTokenEntry[] = [];
+  const seenTokens = new Set<string>();
+
+  if (TELEGRAM_BOT_TOKEN) {
+    entries.push({ token: TELEGRAM_BOT_TOKEN, label: ASSISTANT_NAME });
+    seenTokens.add(TELEGRAM_BOT_TOKEN);
+  }
+
   const extra = process.env.TELEGRAM_BOT_TOKENS || '';
   if (extra) {
-    for (const t of extra.split(',').map(s => s.trim()).filter(Boolean)) {
-      if (!tokens.includes(t)) tokens.push(t);
+    let autoIndex = 2;
+    for (const part of extra.split(',').map(s => s.trim()).filter(Boolean)) {
+      const colonIdx = part.indexOf(':');
+      const token = colonIdx !== -1 ? part.slice(0, colonIdx) : part;
+      const label = colonIdx !== -1 ? part.slice(colonIdx + 1) : `${ASSISTANT_NAME}${autoIndex++}`;
+      if (!seenTokens.has(token)) {
+        entries.push({ token, label });
+        seenTokens.add(token);
+      }
     }
   }
-  return tokens;
+
+  return entries;
 })();
+
+/** All unique Telegram bot tokens (convenience accessor). */
+export const ALL_TELEGRAM_BOT_TOKENS: string[] = ALL_TELEGRAM_BOT_ENTRIES.map(e => e.token);
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
@@ -34,7 +61,6 @@ export const MOUNT_ALLOWLIST_PATH = path.join(
 export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
-export const MAIN_GROUP_FOLDER = 'main';
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';

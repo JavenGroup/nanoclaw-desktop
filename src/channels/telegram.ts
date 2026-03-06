@@ -85,6 +85,7 @@ export class TelegramChannel implements Channel {
   private botToken: string;
   private _botId = '';
   private _isDefaultBot: boolean;
+  private _label: string;
   /** JIDs registered to this bot — populated via refreshOwnedJids(). */
   private ownedJids = new Set<string>();
 
@@ -92,10 +93,11 @@ export class TelegramChannel implements Channel {
   private mediaGroupBuffer = new Map<string, { items: PendingMessage[]; timer: NodeJS.Timeout }>();
   private static MEDIA_GROUP_DEBOUNCE_MS = 1500;
 
-  constructor(botToken: string, opts: TelegramChannelOpts, isDefaultBot = false) {
+  constructor(botToken: string, opts: TelegramChannelOpts, isDefaultBot = false, label = '') {
     this.botToken = botToken;
     this.opts = opts;
     this._isDefaultBot = isDefaultBot;
+    this._label = label;
   }
 
   /** Telegram bot numeric ID (available after connect). */
@@ -103,6 +105,9 @@ export class TelegramChannel implements Channel {
 
   /** Whether this is the default/primary bot (first token). */
   get isDefaultBot(): boolean { return this._isDefaultBot; }
+
+  /** Human-readable label for this bot (e.g. "Andy", "Andy2"). */
+  get label(): string { return this._label; }
 
   /**
    * Rebuild the set of JIDs this bot owns from registered groups.

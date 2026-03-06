@@ -3,12 +3,11 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  ALL_TELEGRAM_BOT_TOKENS,
+  ALL_TELEGRAM_BOT_ENTRIES,
   ASSISTANT_NAME,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ONLY,
@@ -142,7 +141,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid] || registeredGroups[stripTopicSuffix(chatJid)];
   if (!group) return true;
 
-  const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
+  const isMainGroup = group.isAdmin === true;
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
   const missedMessages = getMessagesSince(
@@ -281,7 +280,7 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<AgentResult> {
   const effectiveFolder = getEffectiveFolder(group.folder, chatJid);
-  const isMain = group.folder === MAIN_GROUP_FOLDER;
+  const isMain = group.isAdmin === true;
   const sessionId = sessions[effectiveFolder];
 
   // Update tasks snapshot for container to read (filtered by group)
@@ -397,7 +396,7 @@ async function startMessageLoop(): Promise<void> {
           const group = registeredGroups[chatJid] || registeredGroups[stripTopicSuffix(chatJid)];
           if (!group) continue;
 
-          const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
+          const isMainGroup = group.isAdmin === true;
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
 
           // If an agent is already active for this chat (e.g. scheduled task),
@@ -630,8 +629,8 @@ async function main(): Promise<void> {
     await whatsapp.connect();
   }
 
-  for (let i = 0; i < ALL_TELEGRAM_BOT_TOKENS.length; i++) {
-    const token = ALL_TELEGRAM_BOT_TOKENS[i];
+  for (let i = 0; i < ALL_TELEGRAM_BOT_ENTRIES.length; i++) {
+    const { token, label } = ALL_TELEGRAM_BOT_ENTRIES[i];
     const isDefault = (token === TELEGRAM_BOT_TOKEN) || (i === 0);
     const telegram = new TelegramChannel(token, {
       ...channelOpts,
@@ -646,7 +645,7 @@ async function main(): Promise<void> {
           logger.info({ oldJid, newJid }, 'Group registration migrated to supergroup ID');
         }
       },
-    }, isDefault);
+    }, isDefault, label);
     channels.push(telegram);
     telegramBots.push(telegram);
     await telegram.connect();

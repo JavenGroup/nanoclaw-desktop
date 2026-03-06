@@ -41,6 +41,7 @@ export interface RegisteredGroup {
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   runtime?: 'container' | 'lume'; // Default: 'container'
   botId?: string; // Telegram bot ID that owns this group (null = default/any bot)
+  isAdmin?: boolean; // Admin channel: cross-group IPC, full task visibility, no trigger needed
 }
 
 export interface NewMessage {

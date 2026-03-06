@@ -6,7 +6,6 @@ import path from 'path';
 import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  MAIN_GROUP_FOLDER,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
@@ -66,7 +65,7 @@ async function runTask(
   }
 
   // Update tasks snapshot for container to read (filtered by group)
-  const isMain = baseFolder === MAIN_GROUP_FOLDER;
+  const isMain = group.isAdmin === true;
   const tasks = getAllTasks();
   writeTasksSnapshot(
     task.group_folder,

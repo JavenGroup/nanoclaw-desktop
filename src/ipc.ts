@@ -8,7 +8,6 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IPC_POLL_INTERVAL,
-  MAIN_GROUP_FOLDER,
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
@@ -61,7 +60,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     for (const sourceGroup of groupFolders) {
       const baseFolder = getBaseFolder(sourceGroup);
-      const isMain = baseFolder === MAIN_GROUP_FOLDER;
+      // Determine admin status by looking up the registered group by folder
+      const isMain = Object.values(registeredGroups).some(
+        g => g.folder === baseFolder && g.isAdmin === true,
+      );
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
@@ -223,6 +225,7 @@ export async function processTaskIpc(
     trigger?: string;
     containerConfig?: RegisteredGroup['containerConfig'];
     botId?: string;
+    isAdmin?: boolean;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -418,6 +421,7 @@ export async function processTaskIpc(
           added_at: new Date().toISOString(),
           containerConfig: data.containerConfig,
           botId: data.botId,
+          isAdmin: data.isAdmin,
         });
       } else {
         logger.warn(

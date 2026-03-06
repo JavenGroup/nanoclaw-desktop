@@ -363,29 +363,32 @@ On first run, NanoClaw reads `data/registered_groups.json`, migrates it into SQL
 
 **Always register both DM and Group.** Each entry MUST have a unique `folder` value.
 
-- **DM** (`folder: "main"`): admin channel with elevated privileges, `requiresTrigger: false`
-- **Group** (`folder: "workspace"`): working channel with per-topic isolation
+**Folder naming convention:** `{label}-dm` for DM, `{label}-forum` for groups. The label defaults to `ASSISTANT_NAME` lowercased (e.g. `andy`). This keeps folder names human-readable and avoids confusion with system-level "workspace" terminology.
+
+- **DM** (`folder: "{label}-dm"`): admin channel with elevated privileges, `requiresTrigger: false`, `isAdmin: true`
+- **Group** (`folder: "{label}-forum"`): working channel with per-topic isolation
 
 Ask the user whether the group needs a trigger word:
 > Does your Telegram group have other people besides you and the bot?
 > - **Yes** → trigger word required (`requiresTrigger: true`) to avoid responding to every message
 > - **No, just me and the bot** → no trigger needed (`requiresTrigger: false`)
 
-Write `data/registered_groups.json`:
+Write `data/registered_groups.json` (use `ASSISTANT_NAME` lowercased as folder prefix, e.g. `andy`):
 
 ```json
 {
   "DM_CHAT_JID": {
-    "name": "main",
-    "folder": "main",
+    "name": "ASSISTANT_NAME",
+    "folder": "LABEL-dm",
     "trigger": "@ASSISTANT_NAME",
     "added_at": "CURRENT_ISO_TIMESTAMP",
     "runtime": "lume",
-    "requiresTrigger": false
+    "requiresTrigger": false,
+    "isAdmin": true
   },
   "GROUP_CHAT_JID": {
-    "name": "GROUP_NAME",
-    "folder": "workspace",
+    "name": "ASSISTANT_NAME",
+    "folder": "LABEL-forum",
     "trigger": "@ASSISTANT_NAME",
     "added_at": "CURRENT_ISO_TIMESTAMP",
     "runtime": "lume",
@@ -394,9 +397,11 @@ Write `data/registered_groups.json`:
 }
 ```
 
+Where `LABEL` is `ASSISTANT_NAME` lowercased (e.g. `Andy` → `andy-dm`, `andy-forum`).
+
 Create the project folder:
 ```bash
-mkdir -p groups/workspace
+mkdir -p groups/LABEL-forum
 ```
 
 The JSON will be auto-migrated to SQLite on first startup.
@@ -406,22 +411,22 @@ The JSON will be auto-migrated to SQLite on first startup.
 If the database already exists (JSON was already migrated), use SQL instead:
 
 ```sql
--- Admin DM channel (bot_id is auto-backfilled on first startup if NULL)
+-- Admin DM channel (bot_id is auto-backfilled on first startup if NULL, is_admin=1 for admin privileges)
 sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
-  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id)
-  VALUES ('DM_CHAT_JID', 'main', 'main', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume', NULL);"
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id, is_admin)
+  VALUES ('DM_CHAT_JID', 'ASSISTANT_NAME', 'LABEL-dm', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume', NULL, 1);"
 
 -- Project group channel (set requires_trigger=1 if group has other people, 0 if just user+bot)
 sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
-  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id)
-  VALUES ('GROUP_CHAT_JID', 'GROUP_NAME', 'workspace', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume', NULL);"
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id, is_admin)
+  VALUES ('GROUP_CHAT_JID', 'ASSISTANT_NAME', 'LABEL-forum', '@ASSISTANT_NAME', 'CURRENT_ISO_TIMESTAMP', NULL, 0, 'lume', NULL, 0);"
 ```
 
 The `bot_id` is set to NULL here — it will be automatically backfilled with the default bot's ID on startup. To add more bots later, use `/add-telegram-bot`.
 
 Verify:
 ```bash
-sqlite3 store/messages.db "SELECT jid, name, folder, requires_trigger, bot_id FROM registered_groups;"
+sqlite3 store/messages.db "SELECT jid, name, folder, requires_trigger, bot_id, is_admin FROM registered_groups;"
 ```
 
 **Important:**

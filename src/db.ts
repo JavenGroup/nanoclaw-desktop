@@ -101,6 +101,20 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add is_admin column if it doesn't exist (migration: decouple admin from folder name)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN is_admin INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Backfill is_admin for the legacy 'main' folder
+  database.exec(
+    `UPDATE registered_groups SET is_admin = 1 WHERE folder = 'main' AND is_admin = 0`,
+  );
 }
 
 export function initDatabase(): void {
@@ -510,6 +524,7 @@ export function getRegisteredGroup(
         requires_trigger: number | null;
         runtime: string | null;
         bot_id: string | null;
+        is_admin: number | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -525,6 +540,7 @@ export function getRegisteredGroup(
     requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     runtime: (row.runtime as RegisteredGroup['runtime']) || undefined,
     botId: row.bot_id || undefined,
+    isAdmin: row.is_admin === 1,
   };
 }
 
@@ -533,8 +549,8 @@ export function setRegisteredGroup(
   group: RegisteredGroup,
 ): void {
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, runtime, bot_id, is_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -545,6 +561,7 @@ export function setRegisteredGroup(
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.runtime || null,
     group.botId || null,
+    group.isAdmin ? 1 : 0,
   );
 }
 
@@ -571,6 +588,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     requires_trigger: number | null;
     runtime: string | null;
     bot_id: string | null;
+    is_admin: number | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -585,6 +603,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       runtime: (row.runtime as RegisteredGroup['runtime']) || undefined,
       botId: row.bot_id || undefined,
+      isAdmin: row.is_admin === 1,
     };
   }
   return result;
