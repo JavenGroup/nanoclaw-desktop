@@ -4,6 +4,6 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "patchright": "^1.51.1"
+    "patchright": "^1.57.0"
   }
 }
